@@ -38,6 +38,9 @@ MEMORY:
 - Never claim a memory was saved or deleted unless confirmed.
 - Respect corrections and updated information.
 - If asked what you remember, accurately summarise supplied memories.
+- Never treat a question as a statement of personal information.
+- Do not assume preferences from the user's questions.
+- Do not invent additional preferences or personal facts.
 
 SAFETY AND PERMISSIONS:
 - Never claim to have completed an action unless it happened.
@@ -432,50 +435,182 @@ function getExplicitMemoryCommand(message: string): {
   return null;
 }
 
+// AUTOMATIC MEMORY FILTERS
+
+function shouldExtractMemories(message: string): boolean {
+  const text = message.trim();
+
+  if (!text || text.length < 8) return false;
+
+  // Questions must never trigger automatic memory extraction.
+  if (text.includes("?")) return false;
+
+  // Ignore common questions and requests even without question marks.
+  if (/^(what|why|when|where|who|which|how|can you|could you|would you|will you|do you|did you|does|is there|are there|tell me|show me|list|explain|describe|help me|find me|search for)\b/i.test(text)) {
+    return false;
+  }
+
+  // Ignore messages that are clearly asking about existing memories.
+  if (/\b(what do you remember|what have you remembered|what do you know about my|show my memories|list my memories|what have you saved)\b/i.test(text)) {
+    return false;
+  }
+
+  // Require a clear first-person statement.
+  const hasPersonalStatement =
+    /\b(i am|i'm|i have|i've|i prefer|i like|i love|i enjoy|i use|i own|i drive|i work|i live|i study|i need|i want|i plan|i usually|i always|my \w+ is|my \w+ are|we are|we're|our \w+ is)\b/i.test(text);
+
+  return hasPersonalStatement;
+}
+
+function isValidAutomaticCandidate(
+  candidate: MemoryCandidate,
+): boolean {
+  const key = normalizeMemoryKey(candidate.key);
+  const value = candidate.value.trim();
+
+  if (!key || !value) return false;
+  if (key.length > 80 || value.length > 1000) return false;
+  if (value.includes("?")) return false;
+  if (isSensitiveMemory(key, value)) return false;
+
+  // Reject vague, generic or meaningless memory names.
+  const genericKeys = new Set([
+    "preference",
+    "preferences",
+    "general_preference",
+    "general_preferences",
+    "personal_information",
+    "personal_details",
+    "user_information",
+    "user_preferences",
+    "theme",
+    "themes",
+    "theme_preference",
+    "theme_preferences",
+    "general",
+    "information",
+    "memory",
+    "memories",
+    "user",
+    "user_profile",
+    "personal",
+    "fact",
+    "facts",
+  ]);
+
+  if (genericKeys.has(key)) return false;
+
+  const keyWords = key.split("_").filter(Boolean);
+
+  // Avoid keys that are entire phrases or copied questions.
+  if (keyWords.length > 5) return false;
+
+  if (/^(what|why|when|where|who|which|how|tell|show|explain|describe|remember|know)_/i.test(key)) {
+    return false;
+  }
+
+  return true;
+}
+
 // AUTOMATIC MEMORY EXTRACTION
 
 async function extractMemories(
   env: Env,
   message: string,
 ): Promise<MemoryCandidate[]> {
+  // Do not even call the extraction model for questions or casual messages.
+  if (!shouldExtractMemories(message)) {
+    return [];
+  }
+
   const prompt = `
-You are the memory extraction system for NEXUS.
+You are the factual memory extraction system for NEXUS.
 
-Identify useful long-term information explicitly stated by the user
-in their latest message.
+Your job is to identify useful information the USER explicitly tells you about THEMSELVES.
 
-Only consider:
-- Stable personal facts that are not sensitive.
-- Preferences.
-- Ongoing projects and project decisions.
-- Long-term goals.
-- Regular routines.
-- Temporary plans or short-lived details.
+IMPORTANT RULES:
+
+1. Only extract facts clearly stated as personal information.
+2. Never extract information from questions.
+3. Never turn a question into a personal fact.
+4. Never assume a preference based on something the user asks about.
+5. Never copy question wording into a memory key.
+6. Never create a memory simply because a topic was mentioned.
+7. Save specific facts, not vague phrases.
+8. Do not create duplicate memories.
+9. If the message contains no useful personal fact, return an empty array.
+
+GOOD EXAMPLES:
+
+User: "I prefer dark themes over light themes."
+Memory:
+{
+  "key": "theme_preference",
+  "value": "Prefers dark themes over light themes.",
+  "category": "preference",
+  "importance": 6,
+  "expires_in_days": null,
+  "aliases": []
+}
+
+User: "My favourite colour is blue."
+Memory:
+{
+  "key": "favourite_colour",
+  "value": "Blue.",
+  "category": "preference",
+  "importance": 5,
+  "expires_in_days": null,
+  "aliases": []
+}
+
+User: "I'm building a music discovery app called BangerAlertz."
+Memory:
+{
+  "key": "bangeralertz_project",
+  "value": "Building a music discovery app called BangerAlertz.",
+  "category": "project",
+  "importance": 8,
+  "expires_in_days": null,
+  "aliases": []
+}
+
+BAD EXAMPLES:
+
+User: "What do you know about my theme preferences?"
+Result: EMPTY. This is a question, not a fact.
+
+User: "Can you help me choose a colour?"
+Result: EMPTY. This is a request, not a preference.
+
+User: "I prefer dark themes. What do you think?"
+Result: Do not extract automatically because the message contains a question.
+
+User: "Tell me about music discovery apps."
+Result: EMPTY. This is a question.
 
 DO NOT save:
 - Casual conversation or questions.
 - Guesses or assumptions.
 - Information about other people unless essential to a user project.
-- Passwords, credentials, financial account details.
+- Passwords, credentials or financial account details.
 - Medical or mental health details.
 - Sensitive identity, religious, political or sexual information.
 - Precise addresses or private location details.
+- Generic keys such as "preferences", "theme_preferences", "personal_information" or "general".
 
-Only save information directly supported by the message.
-Do not invent missing details.
-Do not create duplicate facts.
-Prefer updating an existing topic over creating a new one.
-Return at most 3 useful memories.
-If nothing is worth saving, return {"memories":[]}.
+Only save stable personal facts, preferences, ongoing projects, goals, routines or genuinely useful temporary plans.
+
+Return at most 3 memories.
 
 Return ONLY valid JSON in this exact structure:
 {
   "memories": [
     {
-      "key": "short_descriptive_key",
-      "value": "clear memory value",
-      "category": "personal",
-      "importance": 7,
+      "key": "specific_descriptive_key",
+      "value": "clear factual memory",
+      "category": "preference",
+      "importance": 6,
       "expires_in_days": null,
       "aliases": []
     }
@@ -499,7 +634,7 @@ ${message.slice(0, 3000)}
         messages: [
           {
             role: "system",
-            content: "Extract factual memories. Return JSON only.",
+            content: "You extract only explicit personal facts. Questions are never memories. Return valid JSON only.",
           },
           {
             role: "user",
@@ -548,7 +683,8 @@ ${message.slice(0, 3000)}
               (alias: unknown) => typeof alias === "string"
             ).slice(0, 10)
           : [],
-      }));
+      }))
+      .filter(isValidAutomaticCandidate);
   } catch (error) {
     console.error("Memory extraction failed:", error);
     return [];
@@ -825,7 +961,7 @@ async function handleChatRequest(
       );
     }
 
-    // Automatically identify useful memories.
+    // Automatically identify useful memories only when appropriate.
 
     const candidates = await extractMemories(env, lastUserMessage);
 
