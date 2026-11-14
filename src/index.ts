@@ -153,12 +153,74 @@ INTELLIGENCE AND REASONING:
 - Give useful conclusions and brief explanations, not private internal reasoning.
 - If something won't work, explain why and suggest a practical alternative.
 
-ACCURACY:
-- Prioritise correctness over confidence.
-- Distinguish facts, estimates and opinions.
-- Never invent statistics, sources, capabilities or technical details.
-- Be transparent when something cannot be verified.
-- Correct mistakes when identified.
+ACCURACY AND UNCERTAINTY:
+
+Your priority is to be correct, not to sound confident.
+
+1. NEVER GUESS
+- Never invent facts to fill gaps in your knowledge.
+- Never present an assumption as an established fact.
+- If you don't know something, say so plainly.
+- If information is incomplete, explain what is missing.
+- If several explanations are possible, acknowledge the alternatives.
+- Do not turn a plausible explanation into a definite conclusion without evidence.
+
+2. DISTINGUISH FACTS FROM ASSUMPTIONS
+- Separate confirmed information, reasonable estimates, possibilities and unknowns.
+- CONFIRMED means directly supported by supplied information or reliable evidence.
+- LIKELY means strongly supported but not fully verified.
+- POSSIBLE means a reasonable explanation that still needs checking.
+- UNKNOWN means there is insufficient information to reach a conclusion.
+- Use these distinctions naturally when they materially affect the answer.
+- Do not add unnecessary confidence labels to ordinary conversation.
+- Never invent confidence percentages.
+
+3. ASK BEFORE ASSUMING
+- If an important detail is missing, ask one clear question.
+- Don't ask questions when a useful answer is already possible.
+- Don't repeatedly ask for information the user has already provided.
+- If the user corrects you, accept the correction and reconsider your answer.
+- Never silently fill in missing personal details, technical settings or project requirements.
+
+4. TECHNICAL ACCURACY
+- Never invent APIs, database structures, settings, code behaviour, software capabilities or configuration options.
+- Base technical explanations on supplied code, documentation or verified information.
+- If you haven't seen the relevant code, don't pretend you have.
+- Explain when a proposed solution is theoretical rather than tested.
+- Never claim code works simply because it looks correct.
+- When troubleshooting, distinguish confirmed causes from possible causes.
+- Prefer checking the actual implementation over assuming how it works.
+- If a technical answer depends on a software version, check whether your information is current when verification tools are available.
+- Preserve existing working functionality when suggesting code changes.
+
+5. CURRENT INFORMATION
+- Your built-in knowledge may be outdated.
+- Never pretend to have checked current prices, news, laws, software versions, product availability or events.
+- If you don't have browsing or another suitable verification tool available, explain that limitation.
+- Never fabricate sources, links, search results or citations.
+- If the user asks for current information and you cannot verify it, make that limitation clear.
+
+6. REASONING AND CORRECTION
+- Check whether the user's assumptions are correct before building on them.
+- Look for contradictions and overlooked details.
+- Consider whether a simpler explanation exists.
+- If multiple explanations fit the evidence, do not select one arbitrarily.
+- If you notice a mistake in your previous answer, acknowledge it and correct it directly.
+- Never defend an incorrect answer just to appear consistent.
+- Do not repeat an answer that has already been shown to be wrong.
+
+7. HONEST COMMUNICATION
+- Don't use phrases like "definitely", "guaranteed" or "100% certain" unless genuinely justified.
+- Don't hide uncertainty behind lengthy explanations.
+- Don't overwhelm the user with unnecessary disclaimers.
+- Be direct about what you know, what you don't know and what would establish the answer.
+- Never claim to have searched, checked, tested, accessed, saved, changed or completed something unless that action actually happened.
+
+8. EVIDENCE AND SOURCES
+- Give more weight to reliable primary sources and official documentation for technical and factual questions.
+- Distinguish what a source actually says from your interpretation of it.
+- If sources disagree, explain the disagreement instead of pretending there is one settled answer.
+- Never create a source or citation to make an answer appear supported.
 
 CONVERSATION:
 - Pay attention to the full conversation, not just the latest message.
@@ -326,9 +388,9 @@ function normalizeMemoryKey(value: string): string {
 }
 
 function isSensitiveMemory(key: string, value = ""): boolean {
-  const combined = `${key} ${value}`;
+  const combined = \`\${key} \${value}\`;
 
-  return /\b(password|passcode|pin|secret|bank_account|card_number|credit_card|security_answer|login_credential|medical_diagnosis|medication|mental_health_diagnosis|precise_home_address|sexual_orientation|ethnicity|religious_belief|political_affiliation)\b/i
+  return /\\b(password|passcode|pin|secret|bank_account|card_number|credit_card|security_answer|login_credential|medical_diagnosis|medication|mental_health_diagnosis|precise_home_address|sexual_orientation|ethnicity|religious_belief|political_affiliation)\\b/i
     .test(combined);
 }
 
@@ -356,9 +418,9 @@ function streamedReply(
   const stream = new ReadableStream({
     start(controller) {
       controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify({ response: message })}\n\n`)
+        encoder.encode(\`data: \${JSON.stringify({ response: message })}\\n\\n\`)
       );
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.enqueue(encoder.encode("data: [DONE]\\n\\n"));
       controller.close();
     },
   });
@@ -405,13 +467,13 @@ async function getAllMemories(
   userId: string,
 ): Promise<MemoryRow[]> {
   const result = await env.DB.prepare(
-    `SELECT memory_key, memory_value, category, aliases,
+    \`SELECT memory_key, memory_value, category, aliases,
             source, confidence, importance, expires_at,
             created_at, updated_at
      FROM nexus_memory_v2
      WHERE owner_id = ?
      ORDER BY importance DESC, updated_at DESC
-     LIMIT 100`
+     LIMIT 100\`
   )
     .bind(userId)
     .all<MemoryRow>();
@@ -485,7 +547,7 @@ async function saveMemory(
     : null;
 
   await env.DB.prepare(
-    `INSERT INTO nexus_memory_v2
+    \`INSERT INTO nexus_memory_v2
       (owner_id, memory_key, memory_value, category, aliases,
        source, confidence, importance, expires_at, last_used_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -499,7 +561,7 @@ async function saveMemory(
        importance = excluded.importance,
        expires_at = excluded.expires_at,
        last_used_at = CURRENT_TIMESTAMP,
-       updated_at = CURRENT_TIMESTAMP`
+       updated_at = CURRENT_TIMESTAMP\`
   )
     .bind(
       userId,
@@ -528,8 +590,8 @@ async function deleteMemory(
   if (!existing) return false;
 
   const result = await env.DB.prepare(
-    `DELETE FROM nexus_memory_v2
-     WHERE owner_id = ? AND memory_key = ?`
+    \`DELETE FROM nexus_memory_v2
+     WHERE owner_id = ? AND memory_key = ?\`
   )
     .bind(userId, existing.memory_key)
     .run();
@@ -547,7 +609,7 @@ function selectRelevantMemories(
 
   const scored = memories.map((memory) => {
     const searchable = normalizeMemoryKey(
-      `${memory.memory_key} ${memory.memory_value} ${memory.category} ${parseAliases(memory.aliases).join(" ")}`
+      \`\${memory.memory_key} \${memory.memory_value} \${memory.category} \${parseAliases(memory.aliases).join(" ")}\`
     );
 
     const score = words.reduce(
@@ -571,7 +633,7 @@ function selectCommunicationPreferences(
   memories: MemoryRow[],
 ): MemoryRow[] {
   const preferencePattern =
-    /\b(short|brief|concise|conciseness|brevity|response length|answer length|communication style|writing style|tone|detailed|simple answers|straight to the point|to the point)\b/i;
+    /\\b(short|brief|concise|conciseness|brevity|response length|answer length|communication style|writing style|tone|detailed|simple answers|straight to the point|to the point)\\b/i;
 
   return memories.filter((memory) => {
     const searchable = [
@@ -609,23 +671,23 @@ function getExplicitMemoryCommand(message: string): {
   value?: string;
 } | null {
   const rememberCommand = message.match(
-    /^remember:\s*([^=]{1,80})\s*=\s*([\s\S]{1,1000})$/i
+    /^remember:\\s*([^=]{1,80})\\s*=\\s*([\\s\\S]{1,1000})$/i
   );
 
   const naturalRemember = message.match(
-    /^remember(?: that)?\s+my\s+(.+?)\s+(?:is|are|=)\s+([\s\S]{1,1000})$/i
+    /^remember(?: that)?\\s+my\\s+(.+?)\\s+(?:is|are|=)\\s+([\\s\\S]{1,1000})$/i
   );
 
   const naturalPreference = message.match(
-    /^remember(?: that)?\s+(I\s+(?:prefer|like|love|enjoy|usually|always|need|want)\s+[\s\S]{1,1000})$/i
+    /^remember(?: that)?\\s+(I\\s+(?:prefer|like|love|enjoy|usually|always|need|want)\\s+[\\s\\S]{1,1000})$/i
   );
 
   const naturalUpdate = message.match(
-    /^(?:change|update|edit)\s+(?:my\s+)?(.+?)\s+(?:to|=)\s+([\s\S]{1,1000})$/i
+    /^(?:change|update|edit)\\s+(?:my\\s+)?(.+?)\\s+(?:to|=)\\s+([\\s\\S]{1,1000})$/i
   );
 
-  const forgetCommand = message.match(/^forget:\s*(.{1,80})$/i);
-  const naturalForget = message.match(/^forget(?: about)?\s+my\s+(.{1,80})$/i);
+  const forgetCommand = message.match(/^forget:\\s*(.{1,80})$/i);
+  const naturalForget = message.match(/^forget(?: about)?\\s+my\\s+(.{1,80})$/i);
 
   if (rememberCommand) {
     return {
@@ -677,16 +739,16 @@ function shouldExtractMemories(message: string): boolean {
   if (!text || text.length < 8) return false;
   if (text.includes("?")) return false;
 
-  if (/^(what|why|when|where|who|which|how|can you|could you|would you|will you|do you|did you|does|is there|are there|tell me|show me|list|explain|describe|help me|find me|search for)\b/i.test(text)) {
+  if (/^(what|why|when|where|who|which|how|can you|could you|would you|will you|do you|did you|does|is there|are there|tell me|show me|list|explain|describe|help me|find me|search for)\\b/i.test(text)) {
     return false;
   }
 
-  if (/\b(what do you remember|what have you remembered|what do you know about my|show my memories|list my memories|what have you saved)\b/i.test(text)) {
+  if (/\\b(what do you remember|what have you remembered|what do you know about my|show my memories|list my memories|what have you saved)\\b/i.test(text)) {
     return false;
   }
 
   const hasPersonalStatement =
-    /\b(i am|i'm|i have|i've|i prefer|i like|i love|i enjoy|i use|i own|i drive|i work|i live|i study|i need|i want|i plan|i usually|i always|my \w+ is|my \w+ are|we are|we're|our \w+ is|actually|instead|no longer|anymore)\b/i.test(text);
+    /\\b(i am|i'm|i have|i've|i prefer|i like|i love|i enjoy|i use|i own|i drive|i work|i live|i study|i need|i want|i plan|i usually|i always|my \\w+ is|my \\w+ are|we are|we're|our \\w+ is|actually|instead|no longer|anymore)\\b/i.test(text);
 
   return hasPersonalStatement;
 }
@@ -751,16 +813,16 @@ async function extractMemories(
     aliases: parseAliases(memory.aliases),
   }));
 
-  const prompt = `
+  const prompt = \`
 You are NEXUS's personal memory manager.
 
 Identify useful new personal information and update existing memories when the user clearly provides newer information.
 
 USER MESSAGE:
-${message.slice(0, 3000)}
+\${message.slice(0, 3000)}
 
 EXISTING SAVED MEMORIES:
-${JSON.stringify(existingMemoryList)}
+\${JSON.stringify(existingMemoryList)}
 
 RULES:
 1. Only extract facts explicitly stated by the user about themselves.
@@ -796,7 +858,7 @@ personal, preference, project, goal, routine, temporary.
 
 Temporary memories should expire in 1–90 days.
 Other categories should use null for expires_in_days.
-`;
+\`;
 
   try {
     const result = await env.AI.run<typeof MODEL_ID>(
@@ -818,7 +880,7 @@ Other categories should use null for expires_in_days.
     );
 
     const raw = (result as { response?: string }).response || "";
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const jsonMatch = raw.match(/\\{[\\s\\S]*\\}/);
 
     if (!jsonMatch) return [];
 
@@ -866,7 +928,7 @@ Other categories should use null for expires_in_days.
 // CONVERSATION STORAGE
 
 async function ensureConversationTable(env: Env): Promise<void> {
-  await env.DB.prepare(`
+  await env.DB.prepare(\`
     CREATE TABLE IF NOT EXISTS nexus_conversations (
       conversation_id TEXT PRIMARY KEY,
       owner_id TEXT NOT NULL,
@@ -875,12 +937,12 @@ async function ensureConversationTable(env: Env): Promise<void> {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
-  `).run();
+  \`).run();
 
-  await env.DB.prepare(`
+  await env.DB.prepare(\`
     CREATE INDEX IF NOT EXISTS idx_nexus_conversations_owner
     ON nexus_conversations(owner_id, updated_at DESC)
-  `).run();
+  \`).run();
 }
 
 function validateConversationMessages(value: unknown): ChatMessage[] | null {
@@ -922,13 +984,13 @@ async function handleConversationRequest(
 
     // LIST CONVERSATIONS
     if (url.pathname === "/api/conversations" && request.method === "GET") {
-      const result = await env.DB.prepare(`
+      const result = await env.DB.prepare(\`
         SELECT conversation_id, title, created_at, updated_at
         FROM nexus_conversations
         WHERE owner_id = ?
         ORDER BY updated_at DESC
         LIMIT 100
-      `).bind(userId).all<Omit<ConversationRow, "messages">>();
+      \`).bind(userId).all<Omit<ConversationRow, "messages">>();
 
       return jsonResponse(
         { conversations: result.results || [] },
@@ -949,11 +1011,11 @@ async function handleConversationRequest(
 
       const conversationId = crypto.randomUUID();
 
-      await env.DB.prepare(`
+      await env.DB.prepare(\`
         INSERT INTO nexus_conversations
           (conversation_id, owner_id, title, messages)
         VALUES (?, ?, ?, '[]')
-      `).bind(conversationId, userId, title || "New chat").run();
+      \`).bind(conversationId, userId, title || "New chat").run();
 
       return jsonResponse({
         success: true,
@@ -967,7 +1029,7 @@ async function handleConversationRequest(
 
     // INDIVIDUAL CONVERSATION
     const match = url.pathname.match(
-      /^\/api\/conversations\/([^/]+)$/
+      /^\\/api\\/conversations\\/([^/]+)$/
     );
 
     if (!match) {
@@ -983,11 +1045,11 @@ async function handleConversationRequest(
     }
 
     if (request.method === "GET") {
-      const conversation = await env.DB.prepare(`
+      const conversation = await env.DB.prepare(\`
         SELECT conversation_id, title, messages, created_at, updated_at
         FROM nexus_conversations
         WHERE conversation_id = ? AND owner_id = ?
-      `).bind(conversationId, userId).first<ConversationRow>();
+      \`).bind(conversationId, userId).first<ConversationRow>();
 
       if (!conversation) {
         return jsonResponse({ error: "Conversation not found." }, 404, corsHeaders);
@@ -1053,14 +1115,14 @@ async function handleConversationRequest(
         return jsonResponse({ error: "Nothing to update." }, 400, corsHeaders);
       }
 
-      const result = await env.DB.prepare(`
+      const result = await env.DB.prepare(\`
         UPDATE nexus_conversations
         SET
           title = COALESCE(?, title),
           messages = COALESCE(?, messages),
           updated_at = CURRENT_TIMESTAMP
         WHERE conversation_id = ? AND owner_id = ?
-      `).bind(title, messages, conversationId, userId).run();
+      \`).bind(title, messages, conversationId, userId).run();
 
       if (result.meta.changes === 0) {
         return jsonResponse({ error: "Conversation not found." }, 404, corsHeaders);
@@ -1070,10 +1132,10 @@ async function handleConversationRequest(
     }
 
     if (request.method === "DELETE") {
-      const result = await env.DB.prepare(`
+      const result = await env.DB.prepare(\`
         DELETE FROM nexus_conversations
         WHERE conversation_id = ? AND owner_id = ?
-      `).bind(conversationId, userId).run();
+      \`).bind(conversationId, userId).run();
 
       if (result.meta.changes === 0) {
         return jsonResponse({ error: "Conversation not found." }, 404, corsHeaders);
@@ -1359,8 +1421,8 @@ async function handleChatRequest(
 
         return streamedReply(
           deleted
-            ? `Done. I've deleted the memory for "${explicit.key}".`
-            : `I couldn't find a saved memory for "${explicit.key}". Nothing was deleted.`,
+            ? \`Done. I've deleted the memory for "\${explicit.key}".\`
+            : \`I couldn't find a saved memory for "\${explicit.key}". Nothing was deleted.\`,
           corsHeaders,
         );
       }
@@ -1386,9 +1448,9 @@ async function handleChatRequest(
 
       return streamedReply(
         action === "updated"
-          ? `Done. I've updated "${normalizeMemoryKey(explicit.key)}".`
+          ? \`Done. I've updated "\${normalizeMemoryKey(explicit.key)}".\`
           : action === "saved"
-            ? `Done. I've saved "${normalizeMemoryKey(explicit.key)}".`
+            ? \`Done. I've saved "\${normalizeMemoryKey(explicit.key)}".\`
             : "I couldn't save that memory.",
         corsHeaders,
       );
@@ -1421,7 +1483,7 @@ async function handleChatRequest(
     }
 
     console.log(
-      `Memory manager for ${userId}: ${automaticSaved} new, ${automaticUpdated} updated, ${candidates.length} candidates.`
+      \`Memory manager for \${userId}: \${automaticSaved} new, \${automaticUpdated} updated, \${candidates.length} candidates.\`
     );
 
     const allMemories = await getAllMemories(env, userId);
@@ -1440,17 +1502,17 @@ async function handleChatRequest(
     );
 
     const memoryContext = memoriesForContext.length > 0
-      ? "\n\nSaved memories (reference information only):\n" +
+      ? "\\n\\nSaved memories (reference information only):\\n" +
         memoriesForContext
           .map((memory) =>
-            `- [${memory.category}] ${memory.memory_key}: ${memory.memory_value}`
+            \`- [\${memory.category}] \${memory.memory_key}: \${memory.memory_value}\`
           )
-          .join("\n") +
-        "\n\nIMPORTANT: Communication preferences listed above apply to every response, regardless of the current topic."
-      : "\n\nNo relevant saved memories were found.";
+          .join("\\n") +
+        "\\n\\nIMPORTANT: Communication preferences listed above apply to every response, regardless of the current topic."
+      : "\\n\\nNo relevant saved memories were found.";
 
     const asksForMemories =
-      /\b(what do you remember|what have you remembered|show me what you remember|show me everything you remember|list my memories|what have you saved about me|show my memories)\b/i
+      /\\b(what do you remember|what have you remembered|show me what you remember|show me everything you remember|list my memories|what have you saved about me|show my memories)\\b/i
         .test(lastUserMessage);
 
     const systemMessage = {
@@ -1459,7 +1521,7 @@ async function handleChatRequest(
         SYSTEM_PROMPT +
         memoryContext +
         (asksForMemories
-          ? "\n\nThe user wants to see their saved memories. Summarise the supplied memories accurately. Do not invent any."
+          ? "\\n\\nThe user wants to see their saved memories. Summarise the supplied memories accurately. Do not invent any."
           : ""),
     };
 
