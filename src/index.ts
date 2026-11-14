@@ -508,6 +508,49 @@ function getNewsWindow(
   };
 }
 
+
+function answerRelativeDateQuestion(
+  message: string,
+  timeZone: string,
+  now = new Date(),
+): string | null {
+  const text = message.toLowerCase();
+
+  const pastMatch = text.match(
+    /\\b(?:what\\s+)?(?:date|day)\\s+(?:was\\s+it\\s+)?(\\d{1,4})\\s+days?\\s+ago\\b/
+  );
+  const futureMatch = text.match(
+    /\\b(?:what\\s+)?(?:date|day)\\s+(?:will\\s+it\\s+be\\s+)?in\\s+(\\d{1,4})\\s+days?\\b/
+  );
+
+  const match = pastMatch || futureMatch;
+  if (!match) return null;
+
+  const amount = Number(match[1]);
+  if (!Number.isSafeInteger(amount) || amount > 100000) return null;
+
+  const localNow = getZonedDateParts(now, timeZone);
+  const offset = pastMatch ? -amount : amount;
+
+  // Calendar arithmetic is performed on the local calendar date,
+  // not by subtracting fixed 24-hour periods. This avoids DST errors.
+  const target = new Date(Date.UTC(
+    localNow.year,
+    localNow.month - 1,
+    localNow.day + offset,
+  ));
+
+  const result = new Intl.DateTimeFormat("en-NZ", {
+    timeZone: "UTC",
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(target);
+
+  return `${amount} ${amount === 1 ? "day" : "days"} ${pastMatch ? "ago" : "from now"} in ${timeZone} is ${result}.`;
+}
+
 function formatPublicationDate(
   value: string,
   timeZone: string,
@@ -2434,6 +2477,16 @@ async function handleChatRequest(
         status: 400,
         headers: corsHeaders,
       });
+    }
+
+    // Answer explicit relative-date questions with deterministic calendar math.
+    const relativeDateAnswer = answerRelativeDateQuestion(
+      lastUserMessage,
+      timeZone,
+    );
+
+    if (relativeDateAnswer) {
+      return streamedReply(relativeDateAnswer, corsHeaders);
     }
 
     const explicit = getExplicitMemoryCommand(lastUserMessage);
