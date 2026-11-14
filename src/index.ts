@@ -11,6 +11,8 @@ const MAX_NEWS_STORIES = 3;
 const MAX_SUPPORTING_SOURCES = 2;
 const MAX_PAGE_TEXT = 1400;
 
+const NEWS_TIME_ZONE = "Pacific/Auckland";
+
 const SYSTEM_PROMPT = `
 You are NEXUS, an intelligent personal AI assistant.
 
@@ -50,9 +52,14 @@ CONVERSATIONS:
 WEB RESEARCH:
 - Your backend uses Exa search.
 - Exa searches the web for general information and news.
-- News searches use Exa's news category and a seven-day publication-date window.
+- News searches use Exa's news category.
+- News searches use a rolling seven-day window calculated using New Zealand local time (Pacific/Auckland).
+- The backend converts the New Zealand local search window into UTC timestamps for Exa.
+- Publication timestamps are compared as absolute timestamps.
+- Date-only publication dates are treated as New Zealand calendar dates because their time and timezone are unavailable.
 - Recent news results are filtered by supplied publication dates.
 - News claims may undergo a second research stage.
+- The second stage performs separate searches for official announcements and independent reporting.
 - The second stage requests extracted webpage text where available.
 - Extracted webpage text may be incomplete or truncated.
 - Headlines, snippets and search matches are not proof.
@@ -97,6 +104,14 @@ NEWS ACCURACY:
 34. Do not reject a directly supported official announcement solely because independent reporting is unavailable.
 35. Explain the evidence level for each story instead of silently discarding it.
 36. When asked for the biggest stories, rank only the supplied candidates using their significance and available evidence. Do not pretend the search has covered every story on the internet.
+37. Interpret news windows and publication dates using New Zealand local time.
+38. Do not assume New Zealand is always UTC+12 or UTC+13. Daylight saving changes the offset.
+39. A date-only publication date has no known publication time. Explain this limitation when it matters.
+40. Official-source searches and independent-reporting searches are separate research tracks. Do not confuse the two.
+41. A source discovered through an independent-reporting search is not automatically independent or credible. Inspect its publisher and page text.
+42. Two different domains may belong to the same publisher or represent syndicated reporting.
+43. Never label multiple-publisher leads as independently corroborated until the actual text supports the same claim and the publishers appear genuinely independent.
+44. If a supporting source is unavailable or its text cannot be retrieved, it cannot confirm the claim.
 
 CAPABILITIES:
 - Hold conversations and answer questions.
@@ -105,7 +120,7 @@ CAPABILITIES:
 - Save and update memories through the memory manager.
 - Search the web using Exa.
 - Search recent news using Exa.
-- Search for supporting evidence.
+- Search separately for official and independent supporting evidence.
 - Retrieve extracted webpage text when available.
 - Help with coding, planning, research, writing and problem-solving.
 - Maintain separate conversations.
@@ -244,17 +259,30 @@ type WebSearchResult = {
   snippet: string;
   source: string;
   indexedAt?: string;
+  publicationDateNZ?: string;
+};
+
+type RetrievedWebSearchResult = WebSearchResult & {
+  pageText?: string;
+  contentRetrieved: boolean;
 };
 
 type VerificationResult = {
   original: WebSearchResult;
-  officialSourceLeads: WebSearchResult[];
-  otherPublisherLeads: WebSearchResult[];
+  officialSourceLeads: RetrievedWebSearchResult[];
+  otherPublisherLeads: RetrievedWebSearchResult[];
   status:
     | "official_source_lead"
     | "multiple_publisher_leads"
     | "official_and_independent"
     | "no_supporting_leads";
+};
+
+type DetailedVerificationResult = VerificationResult & {
+  originalContentRetrieved: boolean;
+  originalPageText?: string;
+  originalIsOfficialSource: boolean;
+  unavailableLeads: RetrievedWebSearchResult[];
 };
 
 // ERROR REPORTING
@@ -290,17 +318,173 @@ function describeError(error: unknown): Record<string, unknown> {
 
 // WEB RESEARCH
 
-type RetrievedWebSearchResult = WebSearchResult & {
-  pageText?: string;
-  contentRetrieved: boolean;
+type ZonedDateParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
 };
 
-type DetailedVerificationResult = VerificationResult & {
-  originalContentRetrieved: boolean;
-  originalPageText?: string;
-  originalIsOfficialSource: boolean;
-  unavailableLeads: RetrievedWebSearchResult[];
-};
+function getZonedDateParts(date: Date): ZonedDateParts {
+  const parts = new Intl.DateTimeFormat("en-NZ", {
+    timeZone: NEWS_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const values: Record<string, number> = {};
+
+  for (const part of parts) {
+    if (part.type !== "literal") {
+      values[part.type] = Number(part.value);
+    }
+  }
+
+  return {
+    year: values.year,
+    month: values.month,
+    day: values.day,
+    hour: values.hour,
+    minute: values.minute,
+    second: values.second,
+  };
+}
+
+function getNZDateKey(parts: ZonedDateParts): string {
+  return [
+    parts.year,
+    String(parts.month).padStart(2, "0"),
+    String(parts.day).padStart(2, "0"),
+  ].join("-");
+}
+
+function nzLocalDateTimeToUTC(parts: ZonedDateParts): Date {
+  const targetUTC = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+  );
+
+  let guess = targetUTC;
+
+  for (let i = 0; i < 4; i++) {
+    const actual = getZonedDateParts(new Date(guess));
+
+    const representedUTC = Date.UTC(
+      actual.year,
+      actual.month - 1,
+      actual.day,
+      actual.hour,
+      actual.minute,
+      actual.second,
+    );
+
+    const difference = targetUTC - representedUTC;
+
+    if (difference === 0) break;
+
+    guess += difference;
+  }
+
+  return new Date(guess);
+}
+
+function getNZNewsWindow(now = new Date()): {
+  start: Date;
+  end: Date;
+  startDateKey: string;
+  endDateKey: string;
+  localNow: string;
+} {
+  const localNow = getZonedDateParts(now);
+
+  // Calculate the same local clock time seven calendar days earlier.
+  // The conversion back to UTC accounts for NZ daylight saving.
+  const shifted = new Date(Date.UTC(
+    localNow.year,
+    localNow.month - 1,
+    localNow.day - 7,
+    localNow.hour,
+    localNow.minute,
+    localNow.second,
+  ));
+
+  const localStart: ZonedDateParts = {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    hour: localNow.hour,
+    minute: localNow.minute,
+    second: localNow.second,
+  };
+
+  const start = nzLocalDateTimeToUTC(localStart);
+
+  return {
+    start,
+    end: now,
+    startDateKey: getNZDateKey(localStart),
+    endDateKey: getNZDateKey(localNow),
+    localNow: new Intl.DateTimeFormat("en-NZ", {
+      timeZone: NEWS_TIME_ZONE,
+      dateStyle: "full",
+      timeStyle: "long",
+    }).format(now),
+  };
+}
+
+function formatNZPublicationDate(value: string): string {
+  // A date-only value has no known time or timezone.
+  // Preserve its calendar date rather than treating it as UTC midnight.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return `${value} NZ calendar date (time unavailable)`;
+  }
+
+  const timestamp = Date.parse(value);
+
+  if (!Number.isFinite(timestamp)) {
+    return "Invalid or unavailable publication date";
+  }
+
+  return new Intl.DateTimeFormat("en-NZ", {
+    timeZone: NEWS_TIME_ZONE,
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestamp)) + " NZ time";
+}
+
+function isWithinNZNewsWindow(
+  publishedDate: string,
+  window: ReturnType<typeof getNZNewsWindow>,
+): boolean {
+  // Date-only dates are compared using NZ calendar dates.
+  // Their exact position within the seven-day window cannot be known.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(publishedDate)) {
+    return (
+      publishedDate >= window.startDateKey &&
+      publishedDate <= window.endDateKey
+    );
+  }
+
+  const timestamp = Date.parse(publishedDate);
+
+  if (!Number.isFinite(timestamp)) return false;
+
+  return (
+    timestamp >= window.start.getTime() &&
+    timestamp <= window.end.getTime()
+  );
+}
 
 function shouldSearchWeb(message: string): boolean {
   const text = message.trim();
@@ -437,6 +621,7 @@ function titleSimilarity(first: string, second: string): number {
   if (a.size === 0 || b.size === 0) return 0;
 
   let matches = 0;
+
   for (const word of a) {
     if (b.has(word)) matches++;
   }
@@ -461,6 +646,7 @@ function hasEvidenceOverlap(
   if (!originalWords.size || !candidateWords.size) return false;
 
   let matches = 0;
+
   for (const word of originalWords) {
     if (candidateWords.has(word)) matches++;
   }
@@ -485,10 +671,7 @@ async function searchExa(
   }
 
   try {
-    const now = new Date();
-    const sevenDaysAgo = new Date(
-      now.getTime() - 7 * 86400000,
-    );
+    const newsWindow = getNZNewsWindow();
 
     const requestBody: Record<string, unknown> = {
       query: query.slice(0, 1500),
@@ -504,8 +687,8 @@ async function searchExa(
 
     if (newsOnly) {
       requestBody.category = "news";
-      requestBody.startPublishedDate = sevenDaysAgo.toISOString();
-      requestBody.endPublishedDate = now.toISOString();
+      requestBody.startPublishedDate = newsWindow.start.toISOString();
+      requestBody.endPublishedDate = newsWindow.end.toISOString();
     }
 
     const response = await fetch("https://api.exa.ai/search", {
@@ -520,11 +703,13 @@ async function searchExa(
 
     if (!response.ok) {
       const errorText = await response.text();
+
       console.error(
         "Exa search failed:",
         response.status,
         errorText.slice(0, 500),
       );
+
       return [];
     }
 
@@ -549,19 +734,18 @@ async function searchExa(
         ) return false;
 
         if (!newsOnly) return true;
+
         if (typeof item.publishedDate !== "string") return false;
 
-        const publishedTimestamp = Date.parse(item.publishedDate);
-
-        return (
-          Number.isFinite(publishedTimestamp) &&
-          publishedTimestamp >= sevenDaysAgo.getTime() &&
-          publishedTimestamp <= now.getTime()
+        return isWithinNZNewsWindow(
+          item.publishedDate,
+          newsWindow,
         );
       })
       .slice(0, resultLimit)
       .map((item) => {
         const source = getDomain(item.url!) || "Web search";
+
         const highlights = Array.isArray(item.highlights)
           ? item.highlights.join(" ")
           : "";
@@ -569,6 +753,11 @@ async function searchExa(
         const pageText = typeof item.text === "string"
           ? cleanSearchText(item.text, textLimit)
           : "";
+
+        const publicationDateNZ =
+          typeof item.publishedDate === "string"
+            ? formatNZPublicationDate(item.publishedDate)
+            : undefined;
 
         return {
           title: cleanSearchText(item.title || "", 200),
@@ -579,6 +768,7 @@ async function searchExa(
           ),
           source,
           indexedAt: item.publishedDate || undefined,
+          publicationDateNZ,
           pageText: pageText.length > 120 ? pageText : undefined,
           contentRetrieved: pageText.length > 120,
         };
@@ -595,14 +785,26 @@ async function verifyNewsResult(
   result: RetrievedWebSearchResult,
   apiKey: string,
 ): Promise<DetailedVerificationResult> {
-  const verificationQuery = [
+  const queryContext = [
     `"${result.title}"`,
     result.snippet.slice(0, 200),
-    "official announcement primary source independent reporting",
   ].filter(Boolean).join(" ");
 
-  const supportingResults = await searchExa(
-    verificationQuery,
+  // Search 1: Look specifically for primary and official announcements.
+  const officialQuery = [
+    queryContext,
+    "official announcement primary source company newsroom",
+  ].join(" ");
+
+  // Search 2: Separately look for independent publisher coverage.
+  const independentQuery = [
+    queryContext,
+    "independent reporting news coverage analysis",
+  ].join(" ");
+
+  // Keep the searches sequential to reduce request pressure.
+  const officialSearch = await searchExa(
+    officialQuery,
     apiKey,
     false,
     true,
@@ -610,22 +812,38 @@ async function verifyNewsResult(
     MAX_PAGE_TEXT,
   );
 
-  const relevantResults = supportingResults.filter((item) =>
-    hasEvidenceOverlap(result, item)
-  );
-
-  const retrievedResults = relevantResults.filter(
-    (item) => item.contentRetrieved,
-  );
-
-  const unavailableLeads = relevantResults.filter(
-    (item) => !item.contentRetrieved,
+  const independentSearch = await searchExa(
+    independentQuery,
+    apiKey,
+    false,
+    true,
+    4,
+    MAX_PAGE_TEXT,
   );
 
   const originalPublisher = getPublisherDomain(result.url);
 
-  // The original article can itself be an official primary source.
-  // Its domain alone is not enough: its page text must also be retrieved.
+  const relevantOfficial = officialSearch.filter((item) =>
+    hasEvidenceOverlap(result, item)
+  );
+
+  const relevantIndependent = independentSearch.filter((item) =>
+    hasEvidenceOverlap(result, item)
+  );
+
+  const retrievedOfficial = relevantOfficial.filter(
+    (item) => item.contentRetrieved,
+  );
+
+  const retrievedIndependent = relevantIndependent.filter(
+    (item) => item.contentRetrieved,
+  );
+
+  const unavailableLeads = [
+    ...relevantOfficial,
+    ...relevantIndependent,
+  ].filter((item) => !item.contentRetrieved);
+
   const originalIsOfficialSource =
     isLikelyPrimarySource(result.url) &&
     result.contentRetrieved;
@@ -640,7 +858,13 @@ async function verifyNewsResult(
     RetrievedWebSearchResult
   >();
 
-  for (const item of retrievedResults) {
+  // The original article can count as an official source only when
+  // its domain is appropriate and its page text was retrieved.
+  if (originalIsOfficialSource) {
+    officialByPublisher.set(originalPublisher, result);
+  }
+
+  for (const item of retrievedOfficial) {
     const publisher = getPublisherDomain(item.url);
 
     if (!publisher || publisher === originalPublisher) continue;
@@ -649,13 +873,28 @@ async function verifyNewsResult(
       if (!officialByPublisher.has(publisher)) {
         officialByPublisher.set(publisher, item);
       }
-    } else if (!otherByPublisher.has(publisher)) {
+    }
+  }
+
+  // Only the separate independent-reporting search contributes
+  // to the other-publisher evidence group.
+  for (const item of retrievedIndependent) {
+    const publisher = getPublisherDomain(item.url);
+
+    if (
+      !publisher ||
+      publisher === originalPublisher ||
+      isLikelyPrimarySource(item.url)
+    ) {
+      continue;
+    }
+
+    if (!otherByPublisher.has(publisher)) {
       otherByPublisher.set(publisher, item);
     }
   }
 
   const officialSourceLeads = [
-    ...(originalIsOfficialSource ? [result] : []),
     ...officialByPublisher.values(),
   ].slice(0, MAX_SUPPORTING_SOURCES + 1);
 
@@ -664,15 +903,15 @@ async function verifyNewsResult(
   ].slice(0, MAX_SUPPORTING_SOURCES);
 
   const hasOfficialSource = officialSourceLeads.length > 0;
-  const hasIndependentReporting = otherPublisherLeads.length >= 2;
+  const hasMultipleOtherPublishers = otherPublisherLeads.length >= 2;
 
   let status: VerificationResult["status"] = "no_supporting_leads";
 
-  if (hasOfficialSource && hasIndependentReporting) {
+  if (hasOfficialSource && hasMultipleOtherPublishers) {
     status = "official_and_independent";
   } else if (hasOfficialSource) {
     status = "official_source_lead";
-  } else if (hasIndependentReporting) {
+  } else if (hasMultipleOtherPublishers) {
     status = "multiple_publisher_leads";
   }
 
@@ -693,10 +932,9 @@ async function verifyNewsResults(
   apiKey: string,
 ): Promise<DetailedVerificationResult[]> {
   const limitedResults = results.slice(0, MAX_NEWS_STORIES);
-
   const verified: DetailedVerificationResult[] = [];
 
-  // Sequential requests reduce load and avoid unnecessary parallel calls.
+  // Sequential verification avoids unnecessary parallel requests.
   for (const result of limitedResults) {
     try {
       verified.push(await verifyNewsResult(result, apiKey));
@@ -729,6 +967,7 @@ async function performWebSearch(
   if (!shouldSearchWeb(message)) return "";
 
   const wantsNews = shouldSearchNews(message);
+  const newsWindow = getNZNewsWindow();
 
   const results = await searchExa(
     message,
@@ -743,7 +982,14 @@ async function performWebSearch(
     return wantsNews
       ? `
 RECENT NEWS SEARCH:
-Exa did not return any results with a valid publication date inside the previous seven days.
+
+The New Zealand local search window was:
+${newsWindow.start.toISOString()} to ${newsWindow.end.toISOString()}
+
+Current New Zealand local time:
+${newsWindow.localNow}
+
+Exa did not return any results with a valid publication date inside the previous seven-day window.
 
 Do not invent developments, dates, headlines or sources.
 Tell the user that recent news could not be verified.
@@ -761,8 +1007,11 @@ Do not invent sources or links.
     return [
       `${index + 1}. ${result.title}`,
       `Source: ${result.source}`,
+      result.publicationDateNZ
+        ? `Exa-supplied publication date in NZ time: ${result.publicationDateNZ}`
+        : "Publication date: unavailable",
       result.indexedAt
-        ? `Exa-supplied publication date: ${result.indexedAt}`
+        ? `Original Exa date value: ${result.indexedAt}`
         : "",
       result.contentRetrieved
         ? "Page text extraction: SUCCESSFUL (may be incomplete)"
@@ -811,7 +1060,7 @@ Do not invent sources or links.
 
         const statusLabel =
           check.status === "official_and_independent"
-            ? "OFFICIAL SOURCE AND MULTIPLE OTHER PUBLISHERS HAVE RELEVANT PAGE TEXT — CHECK EXACT CLAIM"
+            ? "OFFICIAL SOURCE AND MULTIPLE OTHER-PUBLISHER LEADS — CHECK EXACT CLAIM AND INDEPENDENCE"
             : check.status === "official_source_lead"
               ? "OFFICIAL-SOURCE PAGE TEXT RETRIEVED — CHECK EXACT CLAIM"
               : check.status === "multiple_publisher_leads"
@@ -840,10 +1089,10 @@ ${(check.originalPageText || "No extracted text available.").slice(0, MAX_PAGE_T
 Research status:
 ${statusLabel}
 
-Official-source pages:
+Official-source search results:
 ${official}
 
-Other publisher pages:
+Separate independent-reporting search results:
 ${other}
 
 Matching pages without extracted text:
@@ -855,13 +1104,30 @@ ${unavailable}
     return `
 RECENT NEWS SEARCH RESULTS
 
-The following results were returned by Exa's news search and passed the seven-day publication-date filter.
+The following results were returned by Exa's news search and passed the New Zealand local seven-day publication-date filter.
+
+New Zealand timezone:
+${NEWS_TIME_ZONE}
+
+Current New Zealand local time:
+${newsWindow.localNow}
+
+UTC search-window start:
+${newsWindow.start.toISOString()}
+
+UTC search-window end:
+${newsWindow.end.toISOString()}
+
+New Zealand local calendar-date window:
+${newsWindow.startDateKey} to ${newsWindow.endDateKey}
 
 ${formattedResults}
 
 SECOND-STAGE RESEARCH
 
-A separate Exa search was performed for each selected news result. It requested extracted webpage text for supporting pages.
+A separate official-source search and independent-reporting search were performed for each selected news result.
+
+Both searches requested extracted webpage text for supporting pages.
 
 ${verificationContext}
 
@@ -892,6 +1158,7 @@ ADDITIONAL RULES:
 - Two publishers are not independent merely because their domains differ.
 - Check for syndicated, copied or substantially duplicated reporting.
 - A single independent article does not meet the two-publisher corroboration threshold.
+- Do not assume that a source is independent just because it appeared in the independent-reporting search.
 - If an official announcement is confirmed but no independent reporting exists, report it as OFFICIALLY CONFIRMED, not UNVERIFIED.
 - If a story is unverified, explain exactly what evidence is missing.
 - Do not silently discard candidates. Explain the evidence status of each supplied candidate.
@@ -901,6 +1168,8 @@ ADDITIONAL RULES:
 - Do not rank routine documentation updates above major developments without a good reason.
 - Only supplied news results can support claims about recent news.
 - Publication dates are supplied by Exa and are not independently verified.
+- Display publication dates in New Zealand local time where a timestamp is available.
+- A date-only publication value has no known time. Preserve the date and explain that the time is unavailable when relevant.
 - Extracted text may be incomplete or truncated.
 - Never claim to have read an entire article.
 - If extracted text is unavailable, that source cannot confirm the claim.
@@ -915,7 +1184,7 @@ ADDITIONAL RULES:
 
 Present up to three of the strongest stories. For each, include:
 - Headline.
-- Publication date.
+- Publication date in NZ time.
 - Brief explanation of what happened.
 - Evidence label.
 - What is confirmed and what remains uncertain.
