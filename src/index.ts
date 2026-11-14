@@ -1858,15 +1858,18 @@ async function ensureConversationTable(env: Env): Promise<void> {
     )
   \`).run();
 
-  // Migrate existing databases without changing any saved conversations.
-  const columns = await env.DB.prepare(
-    "PRAGMA table_info(nexus_conversations)"
-  ).all<{ name: string }>();
-  if (!(columns.results || []).some((column) => column.name === "is_starred")) {
-    await env.DB.prepare(\`
+  // Add the favourite column to older databases.
+  // A duplicate-column error means the migration has already run.
+  try {
+    await env.DB.prepare(`
       ALTER TABLE nexus_conversations
       ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0
-    \`).run();
+    `).run();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/duplicate column name|already exists/i.test(message)) {
+      throw error;
+    }
   }
 
   await env.DB.prepare(\`
