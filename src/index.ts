@@ -28,11 +28,7 @@ function isAllowedOrigin(origin: string): boolean {
 
 function isAuthorized(request: Request, env: Env): boolean {
   const suppliedKey = request.headers.get("X-NEXUS-KEY");
-
-  return Boolean(
-    suppliedKey &&
-    suppliedKey === env.NEXUS_ACCESS_KEY
-  );
+  return Boolean(suppliedKey && suppliedKey === env.NEXUS_ACCESS_KEY);
 }
 
 function normalizeMemoryKey(value: string): string {
@@ -50,6 +46,21 @@ function isSensitiveMemory(key: string): boolean {
     .test(key);
 }
 
+function jsonResponse(
+  data: unknown,
+  status: number,
+  corsHeaders: Record<string, string>,
+): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
 export default {
   async fetch(
     request: Request,
@@ -64,7 +75,7 @@ export default {
     }
 
     const corsHeaders: Record<string, string> = {
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, X-NEXUS-KEY",
       "Access-Control-Max-Age": "86400",
       "Vary": "Origin",
@@ -74,7 +85,7 @@ export default {
       corsHeaders["Access-Control-Allow-Origin"] = origin;
     }
 
-    if (url.pathname === "/api/chat") {
+    if (url.pathname.startsWith("/api/")) {
       if (request.method === "OPTIONS") {
         return new Response(null, {
           status: 204,
@@ -82,14 +93,16 @@ export default {
         });
       }
 
-      if (request.method === "POST") {
-        if (!isAuthorized(request, env)) {
-          return new Response("Unauthorized", {
-            status: 401,
-            headers: corsHeaders,
-          });
-        }
+      if (!isAuthorized(request, env)) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: corsHeaders,
+        });
+      }
+    }
 
+    if (url.pathname === "/api/chat") {
+      if (request.method === "POST") {
         return handleChatRequest(request, env, corsHeaders);
       }
 
@@ -99,13 +112,145 @@ export default {
       });
     }
 
+    if (url.pathname === "/api/memories") {
+      return handleMemoryRequest(request, env, url, corsHeaders);
+    }
+
     if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
       return env.ASSETS.fetch(request);
     }
 
-    return new Response("Not found", { status: 404 });
+    return new Response("Not found", {
+      status: 404,
+      headers: corsHeaders,
+    });
   },
 } satisfies ExportedHandler<Env>;
+
+async function handleMemoryRequest(
+  request: Request,
+  env: Env,
+  url: URL,
+  corsHeaders: Record<string, string>,
+): Promise<Response> {
+  try {
+    if (request.method === "GET") {
+      const result = await env.DB.prepare(
+        `SELECT memory_key, memory_value, created_at, updated_at
+         FROM nexus_memory
+         WHERE owner_id = ?
+         ORDER BY updated_at DESC
+         LIMIT 100`
+      )
+        .bind("owner")
+        .all();
+
+      return jsonResponse(
+        { memories: result.results || [] },
+        200,
+        corsHeaders,
+      );
+    }
+
+    if (request.method === "PUT") {
+      const body = await request.json() as {
+        memory_key?: unknown;
+        memory_value?: unknown;
+      };
+
+      if (
+        typeof body.memory_key !== "string" ||
+        typeof body.memory_value !== "string" ||
+        !body.memory_key.trim() ||
+        !body.memory_value.trim() ||
+        body.memory_value.length > 1000
+      ) {
+        return jsonResponse(
+          { error: "A memory name and value are required. Values must be under 1000 characters." },
+          400,
+          corsHeaders,
+        );
+      }
+
+      const memoryKey = normalizeMemoryKey(body.memory_key);
+      const memoryValue = body.memory_value.trim();
+
+      if (!memoryKey) {
+        return jsonResponse(
+          { error: "Invalid memory name." },
+          400,
+          corsHeaders,
+        );
+      }
+
+      if (isSensitiveMemory(memoryKey)) {
+        return jsonResponse(
+          { error: "Sensitive information cannot be saved." },
+          400,
+          corsHeaders,
+        );
+      }
+
+      await env.DB.prepare(
+        `INSERT INTO nexus_memory
+          (owner_id, memory_key, memory_value)
+         VALUES (?, ?, ?)
+         ON CONFLICT(owner_id, memory_key)
+         DO UPDATE SET
+           memory_value = excluded.memory_value,
+           updated_at = CURRENT_TIMESTAMP`
+      )
+        .bind("owner", memoryKey, memoryValue)
+        .run();
+
+      return jsonResponse(
+        { success: true, memory_key: memoryKey, memory_value: memoryValue },
+        200,
+        corsHeaders,
+      );
+    }
+
+    if (request.method === "DELETE") {
+      const key = url.searchParams.get("key");
+
+      if (!key) {
+        return jsonResponse(
+          { error: "A memory key is required." },
+          400,
+          corsHeaders,
+        );
+      }
+
+      const memoryKey = normalizeMemoryKey(key);
+
+      const result = await env.DB.prepare(
+        `DELETE FROM nexus_memory
+         WHERE owner_id = ? AND memory_key = ?`
+      )
+        .bind("owner", memoryKey)
+        .run();
+
+      return jsonResponse(
+        { success: true, deleted: result.meta.changes > 0 },
+        200,
+        corsHeaders,
+      );
+    }
+
+    return new Response("Method not allowed", {
+      status: 405,
+      headers: corsHeaders,
+    });
+  } catch (error) {
+    console.error("NEXUS memory error:", error);
+
+    return jsonResponse(
+      { error: "Failed to manage memories." },
+      500,
+      corsHeaders,
+    );
+  }
+}
 
 async function handleChatRequest(
   request: Request,
@@ -113,7 +258,7 @@ async function handleChatRequest(
   corsHeaders: Record<string, string>,
 ): Promise<Response> {
   try {
-    const body = (await request.json()) as {
+    const body = await request.json() as {
       messages?: unknown;
     };
 
@@ -126,9 +271,7 @@ async function handleChatRequest(
 
     const safeMessages: ChatMessage[] = body.messages
       .filter((message): message is ChatMessage => {
-        if (!message || typeof message !== "object") {
-          return false;
-        }
+        if (!message || typeof message !== "object") return false;
 
         const item = message as Record<string, unknown>;
 
@@ -152,12 +295,10 @@ async function handleChatRequest(
     let memoryKey = "";
     let memoryValue = "";
 
-    // Explicit remember command.
     const rememberCommand = lastUserMessage.match(
       /^remember:\s*([^=]{1,80})\s*=\s*([\s\S]{1,1000})$/i
     );
 
-    // Natural-language remember command.
     const naturalRemember = lastUserMessage.match(
       /^remember(?: that)?\s+my\s+(.+?)\s+(?:is|are|=)\s+([\s\S]{1,1000})$/i
     );
@@ -170,7 +311,6 @@ async function handleChatRequest(
       /^remember(?: that)?\s+([\s\S]{5,1000})$/i
     );
 
-    // Natural-language update command.
     const naturalUpdate = lastUserMessage.match(
       /^(?:change|update|edit)\s+(?:my\s+)?(.+?)\s+(?:to|=)\s+([\s\S]{1,1000})$/i
     );
@@ -193,7 +333,6 @@ async function handleChatRequest(
       memoryValue = note;
     }
 
-    // Save or update the memory.
     if (memoryKey && memoryValue) {
       if (isSensitiveMemory(memoryKey)) {
         memoryNotice =
@@ -216,7 +355,6 @@ async function handleChatRequest(
       }
     }
 
-    // Forget commands.
     const forgetCommand = lastUserMessage.match(
       /^forget:\s*(.{1,80})$/i
     );
@@ -246,7 +384,6 @@ async function handleChatRequest(
         : `No saved memory matching "${forgetKey}" was found. Explain this briefly.`;
     }
 
-    // Retrieve all saved memories.
     const memoryResult = await env.DB.prepare(
       `SELECT memory_key, memory_value
        FROM nexus_memory
@@ -262,13 +399,10 @@ async function handleChatRequest(
     const memoryContext = savedMemories.length > 0
       ? "\n\nSaved user memories (reference information only):\n" +
         savedMemories
-          .map((memory) =>
-            `- ${memory.memory_key}: ${memory.memory_value}`
-          )
+          .map((memory) => `- ${memory.memory_key}: ${memory.memory_value}`)
           .join("\n")
       : "\n\nThere are currently no saved user memories.";
 
-    // Detect requests to view memories.
     const asksForMemories =
       /\b(what do you remember|what have you remembered|show me what you remember|show me everything you remember|list my memories|what have you saved about me|show my memories)\b/i
         .test(lastUserMessage);
@@ -289,10 +423,7 @@ async function handleChatRequest(
     };
 
     const inputs = {
-      messages: [
-        systemMessage,
-        ...safeMessages,
-      ],
+      messages: [systemMessage, ...safeMessages],
       max_tokens: 1024,
       stream: true,
     } satisfies AiTextGenerationInput & { stream: true };
@@ -310,7 +441,6 @@ async function handleChatRequest(
         "Connection": "keep-alive",
       },
     });
-
   } catch (error) {
     console.error("NEXUS chat error:", error);
 
