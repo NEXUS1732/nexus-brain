@@ -6,10 +6,23 @@ const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fp8";
 const SYSTEM_PROMPT =
   "You are NEXUS, a helpful, friendly AI assistant. Be concise, accurate and practical. Never claim to have performed an action unless it has actually been completed. Always request explicit approval before consequential external actions.";
 
-const ALLOWED_ORIGINS = [
-  "https://nexus-assistant-cb8.pages.dev",
-  "https://nexus-brain.markmartin1732.workers.dev",
-];
+const MAIN_DOMAIN = "nexus-assistant-cb8.pages.dev";
+
+function isAllowedOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+
+    return (
+      parsed.protocol === "https:" &&
+      (
+        parsed.hostname === MAIN_DOMAIN ||
+        parsed.hostname.endsWith("." + MAIN_DOMAIN)
+      )
+    );
+  } catch {
+    return false;
+  }
+}
 
 export default {
   async fetch(
@@ -20,13 +33,14 @@ export default {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin");
 
-    if (origin && !ALLOWED_ORIGINS.includes(origin)) {
+    if (origin && !isAllowedOrigin(origin)) {
       return new Response("Origin not allowed", { status: 403 });
     }
 
     const corsHeaders: Record<string, string> = {
       "Access-Control-Allow-Methods": "POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
       "Vary": "Origin",
     };
 
@@ -66,26 +80,41 @@ async function handleChatRequest(
   corsHeaders: Record<string, string>,
 ): Promise<Response> {
   try {
-    const { messages = [] } = (await request.json()) as {
-      messages: ChatMessage[];
+    const body = (await request.json()) as {
+      messages?: unknown;
     };
 
-    if (!Array.isArray(messages)) {
+    if (!Array.isArray(body.messages)) {
       return new Response("Invalid messages", {
         status: 400,
         headers: corsHeaders,
       });
     }
 
-    if (!messages.some((msg) => msg.role === "system")) {
-      messages.unshift({
-        role: "system",
-        content: SYSTEM_PROMPT,
-      });
-    }
+    const safeMessages: ChatMessage[] = body.messages
+      .filter((message): message is ChatMessage => {
+        if (!message || typeof message !== "object") {
+          return false;
+        }
+
+        const item = message as Record<string, unknown>;
+
+        return (
+          (item.role === "user" || item.role === "assistant") &&
+          typeof item.content === "string"
+        );
+      })
+      .slice(-30)
+      .map((message) => ({
+        role: message.role,
+        content: message.content.slice(0, 8000),
+      }));
 
     const inputs = {
-      messages,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...safeMessages,
+      ],
       max_tokens: 1024,
       stream: true,
     } satisfies AiTextGenerationInput & { stream: true };
@@ -103,8 +132,9 @@ async function handleChatRequest(
         "Connection": "keep-alive",
       },
     });
+
   } catch (error) {
-    console.error("Chat error:", error);
+    console.error("NEXUS chat error:", error);
 
     return new Response(
       JSON.stringify({ error: "Failed to process request" }),
