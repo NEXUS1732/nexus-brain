@@ -67,6 +67,20 @@ WEB RESEARCH:
 - You cannot interactively browse every website or access private accounts.
 
 NEWS ACCURACY:
+CLAIM-LEVEL VERIFICATION:
+- Verify each important factual statement separately. A story can contain confirmed and unverified details at the same time.
+- Never apply one evidence label to an entire mixed summary if only part of it is supported.
+- Before calling a claim confirmed, identify the exact sentence or passage in retrieved source text that supports it.
+- A source that merely mentions the same company, topic, event category or keywords does not corroborate the claim.
+- Do not infer a resignation, funding amount, valuation, launch, outage, acquisition or other event from a headline unless retrieved page text explicitly says it happened.
+- Distinguish an event that has happened from a planned, proposed, expected, rumoured or upcoming event.
+- Preserve exact units and meanings. A proposed share price is not a company valuation; a target capacity is not operating capacity; a funding rumour is not completed fundraising.
+- For numbers, names, dates and status words, require direct supporting text. If the source does not provide the detail, omit it or mark it unverified.
+- A publisher's summary of another article is not a second independent source. Check for copied wording, attribution to the same original report and syndication.
+- If only one independent publisher supports a claim, label it as single-source reporting, not independently corroborated.
+- If a source's retrieved text is too short, generic or unrelated to establish the precise claim, treat it as unusable evidence.
+- In the final answer, clearly separate confirmed facts from unverified details. Never describe an entire story as verified merely because one part is confirmed.
+
 1. Use supplied Exa news results for current-news questions.
 2. Recent news results must have a supplied publication date within the previous seven days.
 3. Exa publication dates are not independently verified.
@@ -2633,10 +2647,14 @@ Do not claim that current information was verified.
       content: systemContent,
     };
 
+    const newsRequest = shouldSearchNews(lastUserMessage);
+
     const inputs = {
       messages: [systemMessage, ...boundedMessages],
-      max_tokens: 700,
-      temperature: 0.55,
+      // News answers need room for source links and claim-level qualifications.
+      max_tokens: newsRequest ? 1100 : 700,
+      // Lower randomness for factual news summaries and evidence assessments.
+      temperature: newsRequest ? 0.2 : 0.55,
       top_p: 0.9,
       repetition_penalty: 1.05,
       stream: true,
