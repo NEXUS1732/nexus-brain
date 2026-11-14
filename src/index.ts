@@ -815,15 +815,52 @@ function areSameNewsEvent(
 
   const firstEntities = extractNamedEntities(firstText);
   const secondEntities = extractNamedEntities(secondText);
-
   const sharedEntities = [...firstEntities].filter((entity) =>
     secondEntities.has(entity)
   );
 
-  // Require at least two matching named entities, including a multi-word name.
-  // A shared company name alone is not enough to merge separate stories.
+  const firstWords = getMeaningfulWords(firstText);
+  const secondWords = getMeaningfulWords(secondText);
+  const sharedWords = [...firstWords].filter((word) =>
+    secondWords.has(word)
+  );
+
+  // Treat reports about the same named executive and the same company as one
+  // event when both pages describe a leadership change.
+  const leadershipTerms = new Set([
+    "resign", "resigned", "resigns", "resignation", "exit",
+    "oust", "ousted", "steps", "stepped", "down", "ceo",
+    "interim", "successor", "leadership",
+  ]);
+
+  const firstLeadership = [...firstWords].some((word) =>
+    leadershipTerms.has(word)
+  );
+  const secondLeadership = [...secondWords].some((word) =>
+    leadershipTerms.has(word)
+  );
+
+  const sharedPerson = sharedEntities.some((entity) =>
+    entity.includes(" ")
+  );
+  const sharedCompany = sharedEntities.some((entity) =>
+    !entity.includes(" ") && entity.length >= 5
+  );
+
+  if (
+    sharedPerson &&
+    sharedCompany &&
+    firstLeadership &&
+    secondLeadership
+  ) {
+    return true;
+  }
+
+  // General fallback: require multiple shared named entities and meaningful
+  // overlap, so unrelated stories about one company are not merged.
   return sharedEntities.length >= 2 &&
-    sharedEntities.some((entity) => entity.includes(" "));
+    sharedEntities.some((entity) => entity.includes(" ")) &&
+    sharedWords.length >= 3;
 }
 
 function deduplicateNewsResults(
@@ -1172,12 +1209,14 @@ async function performWebSearch(
     timeZone,
     wantsNews,
     wantsNews,
-    wantsNews ? MAX_NEWS_STORIES : 5,
+    // Fetch a wider candidate pool so duplicate articles do not crowd out
+    // other stories before event-level deduplication.
+    wantsNews ? 5 : 5,
     wantsNews ? MAX_PAGE_TEXT : 1000,
   );
 
   const results = wantsNews
-    ? deduplicateNewsResults(searchedResults)
+    ? deduplicateNewsResults(searchedResults).slice(0, MAX_NEWS_STORIES)
     : searchedResults;
 
   if (results.length === 0) {
@@ -1323,6 +1362,10 @@ HIGHEST-PRIORITY VERIFICATION AND OUTPUT RULES:
 - For every material claim, link directly to the exact supplied URL whose retrieved text supports it. If no retrieved text supports it, link only as the original report and say it is unverified.
 - Never use a search-result headline, snippet, keyword overlap or source count as evidence.
 - Do not invent missing source links, facts, dates, amounts or certainty.
+- Never add a second story about an event already represented by another candidate, even if the headline or publisher differs. The backend has already deduplicated candidates; do not re-introduce a duplicate from general knowledge or article details.
+- Do not include allegations about private relationships, espionage, criminal conduct or national security as established facts. Include them only when essential to explain the central event, attribute each allegation to the exact reporting source, distinguish allegations from established facts, and state clearly when the company or authorities have not established them. Omit sensational or tangential allegations from a concise AI-news roundup.
+- When an official company announcement confirms the central event but does not state the reason, report the event as OFFICIALLY CONFIRMED and say the reason is not specified by the company. Do not infer a cause from surrounding reporting.
+- Do not treat a news article's speculation about motives or consequences as confirmed company information.
 - Use the exact output structure below for each story: Headline; publication date; Evidence label; What happened; Claim checks with a direct link beside each claim; Uncertainty; Sources.
 - If the evidence does not support three stories, return fewer than three. Accuracy is more important than filling the list.
 
