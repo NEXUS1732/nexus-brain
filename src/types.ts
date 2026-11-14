@@ -7,6 +7,7 @@ export interface Env {
   };
   SUPABASE_URL: string;
   SUPABASE_PUBLISHABLE_KEY: string;
+  EXA_API_KEY: string;
 }
 
 export interface ChatMessage {
