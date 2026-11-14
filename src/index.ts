@@ -285,11 +285,8 @@ type VerificationResult = {
   original: WebSearchResult;
   officialSourceLeads: RetrievedWebSearchResult[];
   otherPublisherLeads: RetrievedWebSearchResult[];
-  status:
-    | "official_source_lead"
-    | "multiple_publisher_leads"
-    | "official_and_independent"
-    | "no_supporting_leads";
+  // Search results are candidates only. The model must inspect exact claim support.
+  status: "candidate_leads_only" | "no_supporting_leads";
 };
 
 type DetailedVerificationResult = VerificationResult & {
@@ -1026,18 +1023,12 @@ async function verifyNewsResult(
     ...otherByPublisher.values(),
   ].slice(0, MAX_SUPPORTING_SOURCES);
 
-  const hasOfficialSource = officialSourceLeads.length > 0;
-  const hasMultipleOtherPublishers = otherPublisherLeads.length >= 2;
-
-  let status: VerificationResult["status"] = "no_supporting_leads";
-
-  if (hasOfficialSource && hasMultipleOtherPublishers) {
-    status = "official_and_independent";
-  } else if (hasOfficialSource) {
-    status = "official_source_lead";
-  } else if (hasMultipleOtherPublishers) {
-    status = "multiple_publisher_leads";
-  }
+  // Do not infer confirmation from publisher count or domain names.
+  // These are only candidate pages for the model to inspect claim by claim.
+  const status: VerificationResult["status"] =
+    officialSourceLeads.length > 0 || otherPublisherLeads.length > 0
+      ? "candidate_leads_only"
+      : "no_supporting_leads";
 
   return {
     original: result,
@@ -1192,13 +1183,9 @@ Do not invent sources or links.
           : "No matching unavailable pages recorded.";
 
         const statusLabel =
-          check.status === "official_and_independent"
-            ? "OFFICIAL SOURCE AND MULTIPLE OTHER-PUBLISHER LEADS — CHECK EXACT CLAIM AND INDEPENDENCE"
-            : check.status === "official_source_lead"
-              ? "OFFICIAL-SOURCE PAGE TEXT RETRIEVED — CHECK EXACT CLAIM"
-              : check.status === "multiple_publisher_leads"
-                ? "MULTIPLE OTHER-PUBLISHER PAGE TEXTS RETRIEVED — CHECK INDEPENDENCE AND EXACT CLAIM"
-                : "NO USABLE SUPPORTING PAGE TEXT FOUND — UNVERIFIED";
+          check.status === "candidate_leads_only"
+            ? "CANDIDATE SOURCE PAGES RETRIEVED — BACKEND HAS NOT ESTABLISHED CLAIM SUPPORT OR CORROBORATION"
+            : "NO USABLE SUPPORTING PAGE TEXT FOUND — UNVERIFIED";
 
         return `
 CLAIM ${index + 1}: ${check.original.title}
@@ -1236,6 +1223,23 @@ ${unavailable}
 
     return `
 RECENT NEWS SEARCH RESULTS
+
+HIGHEST-PRIORITY VERIFICATION AND OUTPUT RULES:
+- Treat every original article and every second-stage search result as a LEAD, not as proof.
+- The backend has not established that any supporting page confirms a claim. You must inspect the supplied extracted text yourself.
+- A different domain or publisher count is never enough to establish corroboration.
+- Trace reporting to its origin. Articles repeating the same press release, wire story, anonymous source, interview or original report are one source chain, not independent corroboration.
+- Mark OFFICIALLY CONFIRMED only when retrieved text from the exact official URL directly states the specific event or announcement.
+- Mark INDEPENDENTLY CORROBORATED only when at least two credible publishers' retrieved text directly supports the same precise claim and there is evidence their reporting origins are independent.
+- Mark BOTH only when both tests above are separately met. Otherwise use UNVERIFIED or accurately describe a single-source report.
+- Check every number and its unit. A dollar-per-share offer price is not a company valuation; a funding target is not money already raised; a proposed or expected event is not completed.
+- For every material claim, link directly to the exact supplied URL whose retrieved text supports it. If no retrieved text supports it, link only as the original report and say it is unverified.
+- Never use a search-result headline, snippet, keyword overlap or source count as evidence.
+- Do not invent missing source links, facts, dates, amounts or certainty.
+- Use the exact output structure below for each story: Headline; publication date; Evidence label; What happened; Claim checks with a direct link beside each claim; Uncertainty; Sources.
+- If the evidence does not support three stories, return fewer than three. Accuracy is more important than filling the list.
+
+The research below contains candidate pages and extracted text.
 
 The following results were returned by Exa's news search and passed the detected local seven-day publication-date filter.
 
@@ -2655,7 +2659,7 @@ Do not claim that current information was verified.
     }
 
     // Bound the total system context, including research and memories.
-    const MAX_SYSTEM_CONTEXT_CHARS = 18000;
+    const MAX_SYSTEM_CONTEXT_CHARS = 24000;
 
     const systemContent = (
       SYSTEM_PROMPT +
