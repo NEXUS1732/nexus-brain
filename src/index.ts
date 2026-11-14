@@ -26,6 +26,15 @@ function isAllowedOrigin(origin: string): boolean {
   }
 }
 
+function isAuthorized(request: Request, env: Env): boolean {
+  const suppliedKey = request.headers.get("X-NEXUS-KEY");
+
+  return Boolean(
+    suppliedKey &&
+    suppliedKey === env.NEXUS_ACCESS_KEY
+  );
+}
+
 export default {
   async fetch(
     request: Request,
@@ -41,7 +50,7 @@ export default {
 
     const corsHeaders: Record<string, string> = {
       "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Headers": "Content-Type, X-NEXUS-KEY",
       "Access-Control-Max-Age": "86400",
       "Vary": "Origin",
     };
@@ -59,6 +68,13 @@ export default {
       }
 
       if (request.method === "POST") {
+        if (!isAuthorized(request, env)) {
+          return new Response("Unauthorized", {
+            status: 401,
+            headers: corsHeaders,
+          });
+        }
+
         return handleChatRequest(request, env, corsHeaders);
       }
 
