@@ -250,6 +250,7 @@ type ConversationRow = {
   messages: string;
   created_at: string;
   updated_at: string;
+  is_starred: number;
 };
 
 type WebSearchResult = {
@@ -1852,9 +1853,21 @@ async function ensureConversationTable(env: Env): Promise<void> {
       title TEXT NOT NULL DEFAULT 'New chat',
       messages TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      is_starred INTEGER NOT NULL DEFAULT 0
     )
   \`).run();
+
+  // Migrate existing databases without changing any saved conversations.
+  const columns = await env.DB.prepare(
+    "PRAGMA table_info(nexus_conversations)"
+  ).all<{ name: string }>();
+  if (!(columns.results || []).some((column) => column.name === "is_starred")) {
+    await env.DB.prepare(\`
+      ALTER TABLE nexus_conversations
+      ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0
+    \`).run();
+  }
 
   await env.DB.prepare(\`
     CREATE INDEX IF NOT EXISTS idx_nexus_conversations_owner
@@ -1898,11 +1911,19 @@ async function handleConversationRequest(
     await ensureConversationTable(env);
 
     if (url.pathname === "/api/conversations" && request.method === "GET") {
+      // Delete unstarred chats after 60 days without activity.
+      await env.DB.prepare(\`
+        DELETE FROM nexus_conversations
+        WHERE owner_id = ?
+          AND is_starred = 0
+          AND datetime(updated_at) <= datetime('now', '-60 days')
+      \`).bind(userId).run();
+
       const result = await env.DB.prepare(\`
-        SELECT conversation_id, title, created_at, updated_at
+        SELECT conversation_id, title, created_at, updated_at, is_starred
         FROM nexus_conversations
         WHERE owner_id = ?
-        ORDER BY updated_at DESC
+        ORDER BY is_starred DESC, updated_at DESC
         LIMIT 100
       \`).bind(userId).all<Omit<ConversationRow, "messages">>();
 
@@ -1938,8 +1959,46 @@ async function handleConversationRequest(
           conversation_id: conversationId,
           title: title || "New chat",
           messages: [],
+          is_starred: 0,
         },
       }, 201, corsHeaders);
+    }
+
+    const starMatch = url.pathname.match(
+      /^\\/api\\/conversations\\/([^/]+)\\/star$/
+    );
+
+    if (starMatch && request.method === "POST") {
+      let starred: unknown;
+      try {
+        const body = await request.json() as { is_starred?: unknown };
+        starred = body.is_starred;
+      } catch {
+        return jsonResponse({ error: "Invalid request body." }, 400, corsHeaders);
+      }
+
+      if (typeof starred !== "boolean") {
+        return jsonResponse({ error: "is_starred must be true or false." }, 400, corsHeaders);
+      }
+
+      let starConversationId: string;
+      try {
+        starConversationId = decodeURIComponent(starMatch[1]);
+      } catch {
+        return jsonResponse({ error: "Invalid conversation ID." }, 400, corsHeaders);
+      }
+
+      const starResult = await env.DB.prepare(\`
+        UPDATE nexus_conversations
+        SET is_starred = ?
+        WHERE conversation_id = ? AND owner_id = ?
+      \`).bind(starred ? 1 : 0, starConversationId, userId).run();
+
+      if (starResult.meta.changes === 0) {
+        return jsonResponse({ error: "Conversation not found." }, 404, corsHeaders);
+      }
+
+      return jsonResponse({ success: true, is_starred: starred }, 200, corsHeaders);
     }
 
     const match = url.pathname.match(
@@ -1964,7 +2023,7 @@ async function handleConversationRequest(
 
     if (request.method === "GET") {
       const conversation = await env.DB.prepare(\`
-        SELECT conversation_id, title, messages, created_at, updated_at
+        SELECT conversation_id, title, messages, created_at, updated_at, is_starred
         FROM nexus_conversations
         WHERE conversation_id = ? AND owner_id = ?
       \`).bind(conversationId, userId).first<ConversationRow>();
