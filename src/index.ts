@@ -517,10 +517,10 @@ function answerRelativeDateQuestion(
   const text = message.toLowerCase();
 
   const pastMatch = text.match(
-    /\\b(?:what\\s+)?(?:date|day)\\s+(?:was\\s+it\\s+)?(\\d{1,4})\\s+days?\\s+ago\\b/
+    /\b(?:what\s+)?(?:date|day)\s+(?:was\s+it\s+)?(\d{1,4})\s+days?\s+ago\b/
   );
   const futureMatch = text.match(
-    /\\b(?:what\\s+)?(?:date|day)\\s+(?:will\\s+it\\s+be\\s+)?in\\s+(\\d{1,4})\\s+days?\\b/
+    /\b(?:what\s+)?(?:date|day)\s+(?:(?:will\s+it\s+be|is\s+it)\s+)?in\s+(\d{1,4})\s+days?\b/
   );
 
   const match = pastMatch || futureMatch;
