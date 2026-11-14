@@ -41,6 +41,8 @@ MEMORY:
 - Never treat a question as a statement of personal information.
 - Do not assume preferences from the user's questions.
 - Do not invent additional preferences or personal facts.
+- If the user corrects a saved fact, treat the newer statement as authoritative.
+- Do not claim to have updated a memory unless the system confirms it.
 
 SAFETY AND PERMISSIONS:
 - Never claim to have completed an action unless it happened.
@@ -446,7 +448,7 @@ function shouldExtractMemories(message: string): boolean {
   }
 
   const hasPersonalStatement =
-    /\b(i am|i'm|i have|i've|i prefer|i like|i love|i enjoy|i use|i own|i drive|i work|i live|i study|i need|i want|i plan|i usually|i always|my \w+ is|my \w+ are|we are|we're|our \w+ is)\b/i.test(text);
+    /\b(i am|i'm|i have|i've|i prefer|i like|i love|i enjoy|i use|i own|i drive|i work|i live|i study|i need|i want|i plan|i usually|i always|my \w+ is|my \w+ are|we are|we're|our \w+ is|actually|instead|no longer|anymore)\b/i.test(text);
 
   return hasPersonalStatement;
 }
@@ -495,50 +497,102 @@ function isValidAutomaticCandidate(candidate: MemoryCandidate): boolean {
   return true;
 }
 
-// AUTOMATIC MEMORY EXTRACTION
+// AUTOMATIC MEMORY EXTRACTION WITH EXISTING MEMORY AWARENESS
 
 async function extractMemories(
   env: Env,
   message: string,
+  existingMemories: MemoryRow[],
 ): Promise<MemoryCandidate[]> {
   if (!shouldExtractMemories(message)) return [];
 
+  const existingMemoryList = existingMemories.map((memory) => ({
+    key: memory.memory_key,
+    value: memory.memory_value,
+    category: memory.category,
+    aliases: parseAliases(memory.aliases),
+  }));
+
   const prompt = `
-You are the factual memory extraction system for NEXUS.
+You are NEXUS's personal memory manager.
 
-Extract useful facts explicitly stated by the USER about THEMSELVES.
-
-RULES:
-- Extract clear personal facts, preferences, projects, goals and routines.
-- Never extract questions or requests.
-- Never infer a preference from a question.
-- Use specific descriptive keys such as theme_preference, favourite_colour, current_project.
-- Never use vague keys such as preferences or personal_information.
-- Never copy the user's entire sentence as the key.
-- Save only useful, stable or ongoing information.
-- Return an empty array if nothing useful is stated.
-- Return at most 3 memories.
-- Do not save sensitive personal information.
-
-EXAMPLES:
-
-User: "I prefer dark themes over light themes."
-Memory: {"key":"theme_preference","value":"Prefers dark themes over light themes.","category":"preference","importance":6,"expires_in_days":null,"aliases":[]}
-
-User: "My favourite colour is blue."
-Memory: {"key":"favourite_colour","value":"Blue.","category":"preference","importance":5,"expires_in_days":null,"aliases":[]}
-
-User: "I'm building a music discovery app called BangerAlertz."
-Memory: {"key":"bangeralertz_project","value":"Building a music discovery app called BangerAlertz.","category":"project","importance":8,"expires_in_days":null,"aliases":[]}
-
-Return ONLY valid JSON:
-{"memories":[{"key":"specific_key","value":"clear fact","category":"preference","importance":6,"expires_in_days":null,"aliases":[]}]}
-
-Allowed categories: personal, preference, project, goal, routine, temporary.
-Temporary memories should expire in 1–90 days. Other categories use null.
+Your job is to identify useful new personal information and update existing memories when the user clearly provides newer information.
 
 USER MESSAGE:
 ${message.slice(0, 3000)}
+
+EXISTING SAVED MEMORIES:
+${JSON.stringify(existingMemoryList)}
+
+IMPORTANT RULES:
+
+1. Only extract facts explicitly stated by the user about themselves.
+2. Never extract questions or requests.
+3. Never infer personal facts or preferences.
+4. Compare every possible memory against the existing memory list.
+5. If a fact matches an existing memory, REUSE ITS EXACT KEY.
+6. If the user clearly corrects or changes an existing fact, return the updated value using the existing key.
+7. Do not create a second memory for something already stored.
+8. If a fact is genuinely new, create a specific descriptive key.
+9. Keep unrelated facts in separate memories.
+10. Never delete or change information just because it was not mentioned.
+11. If the user expresses uncertainty, do not treat it as a confirmed change.
+12. Do not save sensitive information.
+13. Return an empty array if there is nothing useful to save.
+14. Return at most 3 memories.
+
+EXAMPLES:
+
+Existing:
+{"key":"theme_preference","value":"Prefers dark themes."}
+
+User:
+"I actually prefer light themes now."
+
+Correct:
+{"key":"theme_preference","value":"Prefers light themes.","category":"preference","importance":6,"expires_in_days":null,"aliases":[]}
+
+Incorrect:
+{"key":"new_theme_preference","value":"Prefers light themes."}
+
+Existing:
+{"key":"favourite_colour","value":"Blue."}
+
+User:
+"My favourite colour is green now."
+
+Correct:
+{"key":"favourite_colour","value":"Green.","category":"preference","importance":5,"expires_in_days":null,"aliases":[]}
+
+New fact example:
+
+User:
+"I'm building a music discovery app called BangerAlertz."
+
+Correct:
+{"key":"bangeralertz_project","value":"Building a music discovery app called BangerAlertz.","category":"project","importance":8,"expires_in_days":null,"aliases":[]}
+
+Return ONLY valid JSON in this structure:
+{
+  "memories": [
+    {
+      "key": "specific_key",
+      "value": "clear factual memory",
+      "category": "preference",
+      "importance": 6,
+      "expires_in_days": null,
+      "aliases": []
+    }
+  ]
+}
+
+Allowed categories:
+personal, preference, project, goal, routine, temporary.
+
+Temporary memories should expire in 1–90 days.
+Other categories should use null for expires_in_days.
+
+Do not include explanations outside the JSON.
 `;
 
   try {
@@ -548,14 +602,14 @@ ${message.slice(0, 3000)}
         messages: [
           {
             role: "system",
-            content: "Extract only explicit personal facts. Return valid JSON only.",
+            content: "You are a careful memory manager. Reuse existing memory keys when updating facts. Return valid JSON only.",
           },
           {
             role: "user",
             content: prompt,
           },
         ],
-        max_tokens: 500,
+        max_tokens: 600,
         temperature: 0.1,
       },
     );
@@ -868,19 +922,27 @@ async function handleChatRequest(
       );
     }
 
-    const candidates = await extractMemories(env, lastUserMessage);
+    // Load current memories BEFORE extraction so the AI can check for duplicates.
+    const memoriesBeforeExtraction = await getAllMemories(env);
+
+    const candidates = await extractMemories(
+      env,
+      lastUserMessage,
+      memoriesBeforeExtraction,
+    );
 
     let automaticSaved = 0;
+    let automaticUpdated = 0;
 
     for (const candidate of candidates) {
       const action = await saveMemory(env, candidate, "automatic");
-      if (action === "saved" || action === "updated") {
-        automaticSaved++;
-      }
+
+      if (action === "saved") automaticSaved++;
+      if (action === "updated") automaticUpdated++;
     }
 
     console.log(
-      `Automatic memory extraction: ${candidates.length} candidates, ${automaticSaved} saved or updated.`
+      `Memory manager: ${automaticSaved} new, ${automaticUpdated} updated, ${candidates.length} candidates.`
     );
 
     const allMemories = await getAllMemories(env);
