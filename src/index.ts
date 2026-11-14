@@ -755,8 +755,10 @@ function hasEvidenceOverlap(
   original: WebSearchResult,
   candidate: RetrievedWebSearchResult,
 ): boolean {
+  // Use the short search headline/highlights as the comparison denominator.
+  // Full roundup text contains many unrelated stories and diluted valid matches.
   const originalWords = getMeaningfulWords(
-    original.title + " " + original.snippet + " " + (original.pageText || ""),
+    original.title + " " + original.snippet,
   );
 
   const candidateWords = getMeaningfulWords(
@@ -774,9 +776,68 @@ function hasEvidenceOverlap(
   }
 
   return (
-    matches / originalWords.size >= 0.30 ||
-    titleSimilarity(original.title, candidate.title) >= 0.25
+    matches / originalWords.size >= 0.20 ||
+    titleSimilarity(original.title, candidate.title) >= 0.20
   );
+}
+
+function extractNamedEntities(value: string): Set<string> {
+  const matches = value.match(
+    /\\b(?:[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){1,3}|[A-Z]{2,}(?:\\s+[A-Z]{2,})*)\\b/g,
+  ) || [];
+
+  return new Set(
+    matches.map((item) => item.toLowerCase().replace(/\\s+/g, " ").trim())
+      .filter((item) => item.length > 2),
+  );
+}
+
+function areSameNewsEvent(
+  first: WebSearchResult,
+  second: WebSearchResult,
+): boolean {
+  const firstText = [first.title, first.snippet, first.pageText || ""].join(" ");
+  const secondText = [second.title, second.snippet, second.pageText || ""].join(" ");
+
+  const firstEntities = extractNamedEntities(firstText);
+  const secondEntities = extractNamedEntities(secondText);
+
+  const sharedEntities = [...firstEntities].filter((entity) =>
+    secondEntities.has(entity)
+  );
+
+  // Require at least two matching named entities, including a multi-word name.
+  // A shared company name alone is not enough to merge separate stories.
+  return sharedEntities.length >= 2 &&
+    sharedEntities.some((entity) => entity.includes(" "));
+}
+
+function deduplicateNewsResults(
+  results: RetrievedWebSearchResult[],
+): RetrievedWebSearchResult[] {
+  const unique: RetrievedWebSearchResult[] = [];
+
+  for (const candidate of results) {
+    const duplicateIndex = unique.findIndex((existing) =>
+      areSameNewsEvent(existing, candidate)
+    );
+
+    if (duplicateIndex === -1) {
+      unique.push(candidate);
+      continue;
+    }
+
+    const existing = unique[duplicateIndex];
+    // Keep the page with the most usable extracted text as the representative.
+    if (
+      (candidate.pageText || "").length >
+      (existing.pageText || "").length
+    ) {
+      unique[duplicateIndex] = candidate;
+    }
+  }
+
+  return unique;
 }
 
 async function searchExa(
@@ -911,7 +972,9 @@ async function verifyNewsResult(
 ): Promise<DetailedVerificationResult> {
   const queryContext = [
     `"${result.title}"`,
-    result.snippet.slice(0, 200),
+    result.snippet.slice(0, 300),
+    // A short opening excerpt often contains the exact event named in a roundup.
+    (result.pageText || "").slice(0, 500),
   ].filter(Boolean).join(" ");
 
   // Search 1: Look specifically for primary and official announcements.
@@ -1089,7 +1152,7 @@ async function performWebSearch(
   const wantsNews = shouldSearchNews(message);
   const newsWindow = getNewsWindow(new Date(), timeZone);
 
-  const results = await searchExa(
+  const searchedResults = await searchExa(
     message,
     apiKey,
     timeZone,
@@ -1098,6 +1161,10 @@ async function performWebSearch(
     wantsNews ? MAX_NEWS_STORIES : 5,
     wantsNews ? MAX_PAGE_TEXT : 1000,
   );
+
+  const results = wantsNews
+    ? deduplicateNewsResults(searchedResults)
+    : searchedResults;
 
   if (results.length === 0) {
     return wantsNews
