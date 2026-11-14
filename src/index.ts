@@ -45,6 +45,11 @@ function normalizeMemoryKey(value: string): string {
     .slice(0, 80);
 }
 
+function isSensitiveMemory(key: string): boolean {
+  return /\b(password|passcode|pin|secret|bank|card_number|credit_card|security_answer)\b/i
+    .test(key);
+}
+
 export default {
   async fetch(
     request: Request,
@@ -143,10 +148,16 @@ async function handleChatRequest(
       .find((message) => message.role === "user")
       ?.content.trim() || "";
 
+    let memoryNotice = "";
+    let memoryKey = "";
+    let memoryValue = "";
+
+    // Explicit remember command.
     const rememberCommand = lastUserMessage.match(
       /^remember:\s*([^=]{1,80})\s*=\s*([\s\S]{1,1000})$/i
     );
 
+    // Natural-language remember command.
     const naturalRemember = lastUserMessage.match(
       /^remember(?: that)?\s+my\s+(.+?)\s+(?:is|are|=)\s+([\s\S]{1,1000})$/i
     );
@@ -159,11 +170,10 @@ async function handleChatRequest(
       /^remember(?: that)?\s+([\s\S]{5,1000})$/i
     );
 
-    let memoryNotice = "";
-
-    // Explicit memory saving in either command or natural language.
-    let memoryKey = "";
-    let memoryValue = "";
+    // Natural-language update command.
+    const naturalUpdate = lastUserMessage.match(
+      /^(?:change|update|edit)\s+(?:my\s+)?(.+?)\s+(?:to|=)\s+([\s\S]{1,1000})$/i
+    );
 
     if (rememberCommand) {
       memoryKey = normalizeMemoryKey(rememberCommand[1]);
@@ -174,30 +184,39 @@ async function handleChatRequest(
     } else if (naturalPreference) {
       memoryKey = "preference";
       memoryValue = naturalPreference[1].trim();
+    } else if (naturalUpdate) {
+      memoryKey = normalizeMemoryKey(naturalUpdate[1]);
+      memoryValue = naturalUpdate[2].trim();
     } else if (naturalNote) {
       const note = naturalNote[1].trim();
       memoryKey = "note_" + normalizeMemoryKey(note).slice(0, 65);
       memoryValue = note;
     }
 
+    // Save or update the memory.
     if (memoryKey && memoryValue) {
-      await env.DB.prepare(
-        `INSERT INTO nexus_memory
-          (owner_id, memory_key, memory_value)
-         VALUES (?, ?, ?)
-         ON CONFLICT(owner_id, memory_key)
-         DO UPDATE SET
-           memory_value = excluded.memory_value,
-           updated_at = CURRENT_TIMESTAMP`
-      )
-        .bind("owner", memoryKey, memoryValue)
-        .run();
+      if (isSensitiveMemory(memoryKey)) {
+        memoryNotice =
+          "Do not save this information because it may be sensitive. Explain that passwords, PINs and security details should not be stored in NEXUS.";
+      } else {
+        await env.DB.prepare(
+          `INSERT INTO nexus_memory
+            (owner_id, memory_key, memory_value)
+           VALUES (?, ?, ?)
+           ON CONFLICT(owner_id, memory_key)
+           DO UPDATE SET
+             memory_value = excluded.memory_value,
+             updated_at = CURRENT_TIMESTAMP`
+        )
+          .bind("owner", memoryKey, memoryValue)
+          .run();
 
-      memoryNotice =
-        `The memory has been saved successfully. Confirm briefly what was saved.`;
+        memoryNotice =
+          `The memory "${memoryKey}" was saved or updated successfully. Confirm briefly.`;
+      }
     }
 
-    // Explicit forget commands.
+    // Forget commands.
     const forgetCommand = lastUserMessage.match(
       /^forget:\s*(.{1,80})$/i
     );
@@ -227,7 +246,7 @@ async function handleChatRequest(
         : `No saved memory matching "${forgetKey}" was found. Explain this briefly.`;
     }
 
-    // Load saved memories.
+    // Retrieve all saved memories.
     const memoryResult = await env.DB.prepare(
       `SELECT memory_key, memory_value
        FROM nexus_memory
@@ -249,14 +268,14 @@ async function handleChatRequest(
           .join("\n")
       : "\n\nThere are currently no saved user memories.";
 
-    // Detect requests to list saved memories.
+    // Detect requests to view memories.
     const asksForMemories =
-      /\b(what do you remember|what have you remembered|show me what you remember|list my memories|what have you saved about me)\b/i
+      /\b(what do you remember|what have you remembered|show me what you remember|show me everything you remember|list my memories|what have you saved about me|show my memories)\b/i
         .test(lastUserMessage);
 
     if (asksForMemories) {
       memoryNotice =
-        "The user is asking what you remember about them. Summarise the saved memories listed in your context. If there are none, say so honestly.";
+        "The user is asking to see their saved memories. Summarise the saved memories listed in your context. If there are none, say so honestly.";
     }
 
     const systemMessage = {
