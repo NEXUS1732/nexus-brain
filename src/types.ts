@@ -1,23 +1,19 @@
+
 /**
- * Type definitions for the LLM chat application.
+ * Type definitions for the NEXUS AI application.
  */
 
 export interface Env {
-	/**
-	 * Binding for the Workers AI API.
-	 */
-	AI: Ai;
+  AI: Ai;
 
-	/**
-	 * Binding for static assets.
-	 */
-	ASSETS: { fetch: (request: Request) => Promise<Response> };
+  ASSETS: {
+    fetch: (request: Request) => Promise<Response>;
+  };
+
+  NEXUS_ACCESS_KEY: string;
 }
 
-/**
- * Represents a chat message.
- */
 export interface ChatMessage {
-	role: "system" | "user" | "assistant";
-	content: string;
+  role: "system" | "user" | "assistant";
+  content: string;
 }
