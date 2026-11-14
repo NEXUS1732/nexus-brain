@@ -7,6 +7,7 @@ const SYSTEM_PROMPT =
   "You are NEXUS, a helpful, friendly AI assistant. Be concise, accurate and practical. Never claim to have performed an action unless it has actually been completed. Always request explicit approval before consequential external actions.";
 
 const MAIN_DOMAIN = "nexus-assistant-cb8.pages.dev";
+const BACKEND_DOMAIN = "nexus-brain.markmartin1732.workers.dev";
 
 function isAllowedOrigin(origin: string): boolean {
   try {
@@ -16,7 +17,8 @@ function isAllowedOrigin(origin: string): boolean {
       parsed.protocol === "https:" &&
       (
         parsed.hostname === MAIN_DOMAIN ||
-        parsed.hostname.endsWith("." + MAIN_DOMAIN)
+        parsed.hostname.endsWith("." + MAIN_DOMAIN) ||
+        parsed.hostname === BACKEND_DOMAIN
       )
     );
   } catch {
