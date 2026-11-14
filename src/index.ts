@@ -147,6 +147,14 @@ type MemoryCandidate = {
   aliases?: string[];
 };
 
+type ConversationRow = {
+  conversation_id: string;
+  title: string;
+  messages: string;
+  created_at: string;
+  updated_at: string;
+};
+
 function isAllowedOrigin(origin: string): boolean {
   try {
     const parsed = new URL(origin);
@@ -753,6 +761,241 @@ Other categories should use null for expires_in_days.
   }
 }
 
+// CONVERSATION STORAGE
+
+async function ensureConversationTable(env: Env): Promise<void> {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS nexus_conversations (
+      conversation_id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT 'New chat',
+      messages TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_nexus_conversations_owner
+    ON nexus_conversations(owner_id, updated_at DESC)
+  `).run();
+}
+
+function validateConversationMessages(value: unknown): ChatMessage[] | null {
+  if (!Array.isArray(value) || value.length > 100) return null;
+
+  const messages: ChatMessage[] = [];
+
+  for (const item of value) {
+    if (!item || typeof item !== "object") return null;
+
+    const message = item as Record<string, unknown>;
+
+    if (
+      (message.role !== "user" && message.role !== "assistant") ||
+      typeof message.content !== "string" ||
+      message.content.length > 8000
+    ) {
+      return null;
+    }
+
+    messages.push({
+      role: message.role,
+      content: message.content,
+    });
+  }
+
+  return messages;
+}
+
+async function handleConversationRequest(
+  request: Request,
+  env: Env,
+  url: URL,
+  userId: string,
+  corsHeaders: Record<string, string>,
+): Promise<Response> {
+  try {
+    await ensureConversationTable(env);
+
+    // LIST CONVERSATIONS
+    if (url.pathname === "/api/conversations" && request.method === "GET") {
+      const result = await env.DB.prepare(`
+        SELECT conversation_id, title, created_at, updated_at
+        FROM nexus_conversations
+        WHERE owner_id = ?
+        ORDER BY updated_at DESC
+        LIMIT 100
+      `).bind(userId).all<Omit<ConversationRow, "messages">>();
+
+      return jsonResponse(
+        { conversations: result.results || [] },
+        200,
+        corsHeaders,
+      );
+    }
+
+    // CREATE CONVERSATION
+    if (url.pathname === "/api/conversations" && request.method === "POST") {
+      const body = await request.json() as {
+        title?: unknown;
+      };
+
+      const title = typeof body.title === "string"
+        ? body.title.trim().slice(0, 80)
+        : "New chat";
+
+      const conversationId = crypto.randomUUID();
+
+      await env.DB.prepare(`
+        INSERT INTO nexus_conversations
+          (conversation_id, owner_id, title, messages)
+        VALUES (?, ?, ?, '[]')
+      `).bind(conversationId, userId, title || "New chat").run();
+
+      return jsonResponse({
+        success: true,
+        conversation: {
+          conversation_id: conversationId,
+          title: title || "New chat",
+          messages: [],
+        },
+      }, 201, corsHeaders);
+    }
+
+    // INDIVIDUAL CONVERSATION
+    const match = url.pathname.match(
+      /^\/api\/conversations\/([^/]+)$/
+    );
+
+    if (!match) {
+      return jsonResponse({ error: "Not found." }, 404, corsHeaders);
+    }
+
+    let conversationId: string;
+
+    try {
+      conversationId = decodeURIComponent(match[1]);
+    } catch {
+      return jsonResponse({ error: "Invalid conversation ID." }, 400, corsHeaders);
+    }
+
+    if (request.method === "GET") {
+      const conversation = await env.DB.prepare(`
+        SELECT conversation_id, title, messages, created_at, updated_at
+        FROM nexus_conversations
+        WHERE conversation_id = ? AND owner_id = ?
+      `).bind(conversationId, userId).first<ConversationRow>();
+
+      if (!conversation) {
+        return jsonResponse({ error: "Conversation not found." }, 404, corsHeaders);
+      }
+
+      let messages: ChatMessage[];
+
+      try {
+        messages = JSON.parse(conversation.messages);
+        if (!Array.isArray(messages)) messages = [];
+      } catch {
+        messages = [];
+      }
+
+      return jsonResponse({
+        conversation: {
+          ...conversation,
+          messages,
+        },
+      }, 200, corsHeaders);
+    }
+
+    if (request.method === "PUT") {
+      const body = await request.json() as {
+        title?: unknown;
+        messages?: unknown;
+      };
+
+      let title: string | null = null;
+      let messages: string | null = null;
+
+      if (body.title !== undefined) {
+        if (
+          typeof body.title !== "string" ||
+          !body.title.trim() ||
+          body.title.length > 80
+        ) {
+          return jsonResponse(
+            { error: "Title must be between 1 and 80 characters." },
+            400,
+            corsHeaders,
+          );
+        }
+
+        title = body.title.trim();
+      }
+
+      if (body.messages !== undefined) {
+        const validated = validateConversationMessages(body.messages);
+
+        if (!validated) {
+          return jsonResponse(
+            { error: "Invalid messages. Maximum 100 messages, with each message under 8000 characters." },
+            400,
+            corsHeaders,
+          );
+        }
+
+        messages = JSON.stringify(validated);
+      }
+
+      if (title === null && messages === null) {
+        return jsonResponse({ error: "Nothing to update." }, 400, corsHeaders);
+      }
+
+      const result = await env.DB.prepare(`
+        UPDATE nexus_conversations
+        SET
+          title = COALESCE(?, title),
+          messages = COALESCE(?, messages),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE conversation_id = ? AND owner_id = ?
+      `).bind(title, messages, conversationId, userId).run();
+
+      if (result.meta.changes === 0) {
+        return jsonResponse({ error: "Conversation not found." }, 404, corsHeaders);
+      }
+
+      return jsonResponse({ success: true }, 200, corsHeaders);
+    }
+
+    if (request.method === "DELETE") {
+      const result = await env.DB.prepare(`
+        DELETE FROM nexus_conversations
+        WHERE conversation_id = ? AND owner_id = ?
+      `).bind(conversationId, userId).run();
+
+      if (result.meta.changes === 0) {
+        return jsonResponse({ error: "Conversation not found." }, 404, corsHeaders);
+      }
+
+      return jsonResponse({ success: true }, 200, corsHeaders);
+    }
+
+    return new Response("Method not allowed", {
+      status: 405,
+      headers: corsHeaders,
+    });
+
+  } catch (error) {
+    console.error("NEXUS conversation error:", error);
+
+    return jsonResponse(
+      { error: "Failed to manage conversations." },
+      500,
+      corsHeaders,
+    );
+  }
+}
+
 // MAIN REQUEST HANDLER
 
 export default {
@@ -810,6 +1053,19 @@ export default {
 
       if (url.pathname === "/api/memories") {
         return handleMemoryRequest(
+          request,
+          env,
+          url,
+          userId,
+          corsHeaders,
+        );
+      }
+
+      if (
+        url.pathname === "/api/conversations" ||
+        url.pathname.startsWith("/api/conversations/")
+      ) {
+        return handleConversationRequest(
           request,
           env,
           url,
