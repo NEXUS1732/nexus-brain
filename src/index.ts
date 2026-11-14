@@ -52,7 +52,7 @@ WEB RESEARCH:
 - Exa searches the web for general information and news.
 - News searches use Exa's news category.
 - News searches use a rolling seven-day window calculated using the user's detected local timezone.
-- The backend uses Cloudflare's detected timezone when available, with UTC as a fallback.
+- The backend prefers the frontend's X-Time-Zone header, then Cloudflare's detected timezone, with Pacific/Auckland as the final fallback.
 - The backend converts the local search window into UTC timestamps for Exa.
 - Publication timestamps are compared as absolute timestamps.
 - Date-only publication dates are treated as calendar dates because their time and timezone are unavailable.
@@ -356,6 +356,14 @@ function isValidTimeZone(value: unknown): value is string {
 }
 
 function getRequestTimeZone(request: Request): string {
+  // Prefer the timezone explicitly supplied by the frontend.
+  const clientTimezone = request.headers.get("X-Time-Zone");
+
+  if (isValidTimeZone(clientTimezone)) {
+    return clientTimezone;
+  }
+
+  // Fall back to Cloudflare's detected timezone.
   const cloudflareTimezone = (
     request as Request & {
       cf?: {
@@ -368,7 +376,8 @@ function getRequestTimeZone(request: Request): string {
     return cloudflareTimezone;
   }
 
-  return "UTC";
+  // New Zealand is the final fallback for NEXUS news date windows.
+  return "Pacific/Auckland";
 }
 
 function getZonedDateParts(
@@ -2304,8 +2313,7 @@ async function handleChatRequest(
   corsHeaders: Record<string, string>,
 ): Promise<Response> {
   try {
-    // Cloudflare supplies the detected timezone for this request.
-    // If it is unavailable or invalid, use UTC.
+    // Use the frontend timezone first, then Cloudflare, then New Zealand time.
     const timeZone = getRequestTimeZone(request);
 
     const body = await request.json() as {
