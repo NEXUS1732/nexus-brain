@@ -77,7 +77,7 @@ CLAIM-LEVEL VERIFICATION:
 - Preserve exact units and meanings. A proposed share price is not a company valuation; a target capacity is not operating capacity; a funding rumour is not completed fundraising.
 - For numbers, names, dates and status words, require direct supporting text. If the source does not provide the detail, omit it or mark it unverified.
 - A publisher's summary of another article is not a second independent source. Check for copied wording, attribution to the same original report and syndication.
-- If only one independent publisher supports a claim, label it as single-source reporting, not independently corroborated.
+- Use only the four exact evidence labels defined below. A single publisher without direct official confirmation must be labelled UNVERIFIED, with the uncertainty explaining that it is a single-source report.
 - If a source's retrieved text is too short, generic or unrelated to establish the precise claim, treat it as unusable evidence.
 - In the final answer, clearly separate confirmed facts from unverified details. Never describe an entire story as verified merely because one part is confirmed.
 
@@ -676,6 +676,7 @@ const OFFICIAL_SOURCE_DOMAINS = [
   "x.ai",
   "tesla.com",
   "sec.gov",
+  "wam.ae",
   "federalreserve.gov",
   "whitehouse.gov",
   "europa.eu",
@@ -755,7 +756,7 @@ function hasEvidenceOverlap(
   candidate: RetrievedWebSearchResult,
 ): boolean {
   const originalWords = getMeaningfulWords(
-    original.title + " " + original.snippet,
+    original.title + " " + original.snippet + " " + (original.pageText || ""),
   );
 
   const candidateWords = getMeaningfulWords(
@@ -1227,11 +1228,16 @@ RECENT NEWS SEARCH RESULTS
 HIGHEST-PRIORITY VERIFICATION AND OUTPUT RULES:
 - Treat every original article and every second-stage search result as a LEAD, not as proof.
 - The backend has not established that any supporting page confirms a claim. You must inspect the supplied extracted text yourself.
+- Return no more than three DISTINCT EVENTS, not three articles. Before selecting stories, compare all candidates and merge articles that describe the same underlying event.
+- A news roundup and a separate article about one event already included in that roundup are ONE story. Never list the same resignation, launch, funding round, outage or announcement twice under different headlines.
+- For a duplicate event, choose the clearest original article as the story and use all relevant official and independent source pages across the duplicate candidates as evidence for that one story.
+- Do not use a single-source label. The Evidence field must be exactly one of: OFFICIALLY CONFIRMED, INDEPENDENTLY CORROBORATED, BOTH, UNVERIFIED.
 - A different domain or publisher count is never enough to establish corroboration.
 - Trace reporting to its origin. Articles repeating the same press release, wire story, anonymous source, interview or original report are one source chain, not independent corroboration.
-- Mark OFFICIALLY CONFIRMED only when retrieved text from the exact official URL directly states the specific event or announcement.
-- Mark INDEPENDENTLY CORROBORATED only when at least two credible publishers' retrieved text directly supports the same precise claim and there is evidence their reporting origins are independent.
-- Mark BOTH only when both tests above are separately met. Otherwise use UNVERIFIED or accurately describe a single-source report.
+- Mark OFFICIALLY CONFIRMED when retrieved text from an exact official or primary-source URL directly states the central event or announcement. Do not downgrade it merely because independent coverage is absent.
+- Mark INDEPENDENTLY CORROBORATED only when at least two credible publishers' retrieved text directly supports the same precise claim and their reporting origins are genuinely independent.
+- Mark BOTH only when both tests above are separately met. Otherwise use UNVERIFIED. A single-source report is UNVERIFIED unless its central announcement is directly confirmed by an official source.
+- Evidence labels apply to the central event only. Assess every additional detail, number, date, market movement, named person and status separately in Claim checks; do not let a confirmed central event make unsupported side details appear confirmed.
 - Check every number and its unit. A dollar-per-share offer price is not a company valuation; a funding target is not money already raised; a proposed or expected event is not completed.
 - For every material claim, link directly to the exact supplied URL whose retrieved text supports it. If no retrieved text supports it, link only as the original report and say it is unverified.
 - Never use a search-result headline, snippet, keyword overlap or source count as evidence.
@@ -2661,10 +2667,16 @@ Do not claim that current information was verified.
     // Bound the total system context, including research and memories.
     const MAX_SYSTEM_CONTEXT_CHARS = 24000;
 
+    const newsRequest = shouldSearchNews(lastUserMessage);
+
+    // News research is placed before optional memories so source evidence is not
+    // silently cut off when the system context reaches its character budget.
+    const MAX_SYSTEM_CONTEXT_CHARS = newsRequest ? 32000 : 24000;
+
     const systemContent = (
       SYSTEM_PROMPT +
-      memoryContext +
       webSearchContext +
+      memoryContext +
       (asksForMemories
         ? "\n\nThe user wants to see their saved memories. Summarise the supplied memories accurately. Do not invent any."
         : "")
@@ -2674,8 +2686,6 @@ Do not claim that current information was verified.
       role: "system" as const,
       content: systemContent,
     };
-
-    const newsRequest = shouldSearchNews(lastUserMessage);
 
     const inputs = {
       messages: [systemMessage, ...boundedMessages],
