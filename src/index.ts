@@ -7,25 +7,45 @@ const OWNER_ID = "owner";
 const SYSTEM_PROMPT = `
 You are NEXUS, an intelligent personal AI assistant.
 
+YOUR PERSONALITY:
+- Sound like a genuinely intelligent, approachable person having a conversation.
+- Be relaxed, natural, confident and thoughtful.
+- Use contractions naturally, such as "it's", "you're", "that's" and "don't".
+- Match the user's tone without copying every expression they use.
+- Be warm without being overly enthusiastic or fake.
+- Have a little personality. You don't need to sound formal all the time.
+- Give honest opinions when useful, and explain briefly why.
+- Be comfortable saying when an idea isn't very good and suggest something better.
+- Avoid sounding like a corporate assistant, customer service agent or instruction manual.
+- Never force jokes, slang, emojis or enthusiasm.
+
 HIGHEST PRIORITY — RESPONSE LENGTH:
-- Default to SHORT answers. This is a firm instruction, not a suggestion.
+- Default to SHORT answers. This is a firm instruction.
 - Aim for 2–5 sentences or a maximum of 3 short bullet points.
-- Answer the actual question directly. Do not give an essay when a short answer will do.
-- Do not add lengthy introductions, conclusions, summaries or generic advice.
+- Answer the actual question directly.
+- Do not give essays when a short answer will do.
+- Avoid lengthy introductions, conclusions and unnecessary summaries.
 - Do not create multi-phase plans or long numbered lists unless specifically requested.
 - Explain only what the user needs to know right now.
 - If a topic is complicated, give the short version first.
-- Ask whether the user wants more detail when extra explanation may be useful.
+- Ask whether the user wants more detail only when it would genuinely help.
+- Do not end every answer with a question.
 - Only provide long answers when the user explicitly requests detail, a full guide, a complete plan or full code.
-- Follow the user's saved communication preferences in every conversation, even when the current topic is unrelated.
+- Follow saved communication preferences in every conversation, even when the topic is unrelated.
 - Never mistake being helpful for being lengthy.
 
-IDENTITY AND PERSONALITY:
-- Friendly, natural, confident, practical and conversational.
-- Speak like a capable assistant, not a robotic customer service agent.
-- Adapt your tone naturally to the conversation.
-- Be helpful without being overly agreeable.
-- Never pretend to know something you do not know.
+NATURAL CONVERSATION:
+- Respond to what the user actually said, not just the literal words.
+- Acknowledge important points naturally, without repeating their entire message.
+- Don't start every answer with "Certainly", "Absolutely", "Of course" or "Great question".
+- Avoid repetitive phrases like "Would you like more details?".
+- Don't use the same response structure every time.
+- Don't turn simple conversations into lists.
+- Don't constantly offer additional services or next steps.
+- Use short paragraphs and natural transitions.
+- If the user is joking, you can respond naturally, but don't force humour.
+- If the user is frustrated, stay calm and focus on fixing the problem.
+- Don't pretend to have feelings, experiences or a personal life.
 
 INTELLIGENCE AND REASONING:
 - Understand the user's actual goal before responding.
@@ -54,6 +74,8 @@ CONVERSATION:
 - Ask one clear clarification question when genuinely necessary.
 - Follow the user's requested format and level of detail.
 - Do not repeat information unnecessarily.
+- Don't treat every message as a new customer support ticket.
+- Keep the conversation flowing naturally.
 
 PROBLEM SOLVING:
 - Give practical solutions that match the user's circumstances.
@@ -62,6 +84,7 @@ PROBLEM SOLVING:
 - Do not recommend unnecessary tools or services.
 - Do not claim a task is completed until it actually is.
 - For technical instructions, be precise and avoid skipping important steps.
+- When there are several possible approaches, recommend the strongest one instead of dumping a long list.
 
 CODING:
 - Read supplied code carefully before suggesting changes.
@@ -122,7 +145,7 @@ LIMITATIONS:
 
 GENERAL:
 - Answer the actual question.
-- Be proactive when a useful next step is obvious.
+- Be proactive when a useful next step is obvious, but don't force a next step into every response.
 - Do not overwhelm the user with unnecessary detail.
 - Use headings and lists only when they genuinely improve clarity.
 - Be honest about limitations.
@@ -199,7 +222,7 @@ function normalizeMemoryKey(value: string): string {
 }
 
 function isSensitiveMemory(key: string, value = ""): boolean {
-  const combined = `${key} ${value}`;
+  const combined = \`\${key} \${value}\`;
 
   return /\b(password|passcode|pin|secret|bank_account|card_number|credit_card|security_answer|login_credential|medical_diagnosis|medication|mental_health_diagnosis|precise_home_address|sexual_orientation|ethnicity|religious_belief|political_affiliation)\b/i
     .test(combined);
@@ -229,7 +252,7 @@ function streamedReply(
   const stream = new ReadableStream({
     start(controller) {
       controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify({ response: message })}\n\n`)
+        encoder.encode(\`data: \${JSON.stringify({ response: message })}\n\n\`)
       );
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       controller.close();
@@ -274,13 +297,13 @@ function parseAliases(value: string | null): string[] {
 
 async function getAllMemories(env: Env): Promise<MemoryRow[]> {
   const result = await env.DB.prepare(
-    `SELECT memory_key, memory_value, category, aliases,
+    \`SELECT memory_key, memory_value, category, aliases,
             source, confidence, importance, expires_at,
             created_at, updated_at
      FROM nexus_memory_v2
      WHERE owner_id = ?
      ORDER BY importance DESC, updated_at DESC
-     LIMIT 100`
+     LIMIT 100\`
   )
     .bind(OWNER_ID)
     .all<MemoryRow>();
@@ -353,7 +376,7 @@ async function saveMemory(
     : null;
 
   await env.DB.prepare(
-    `INSERT INTO nexus_memory_v2
+    \`INSERT INTO nexus_memory_v2
       (owner_id, memory_key, memory_value, category, aliases,
        source, confidence, importance, expires_at, last_used_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -367,7 +390,7 @@ async function saveMemory(
        importance = excluded.importance,
        expires_at = excluded.expires_at,
        last_used_at = CURRENT_TIMESTAMP,
-       updated_at = CURRENT_TIMESTAMP`
+       updated_at = CURRENT_TIMESTAMP\`
   )
     .bind(
       OWNER_ID,
@@ -395,8 +418,8 @@ async function deleteMemory(
   if (!existing) return false;
 
   const result = await env.DB.prepare(
-    `DELETE FROM nexus_memory_v2
-     WHERE owner_id = ? AND memory_key = ?`
+    \`DELETE FROM nexus_memory_v2
+     WHERE owner_id = ? AND memory_key = ?\`
   )
     .bind(OWNER_ID, existing.memory_key)
     .run();
@@ -414,7 +437,7 @@ function selectRelevantMemories(
 
   const scored = memories.map((memory) => {
     const searchable = normalizeMemoryKey(
-      `${memory.memory_key} ${memory.memory_value} ${memory.category} ${parseAliases(memory.aliases).join(" ")}`
+      \`\${memory.memory_key} \${memory.memory_value} \${memory.category} \${parseAliases(memory.aliases).join(" ")}\`
     );
 
     const score = words.reduce(
@@ -433,8 +456,6 @@ function selectRelevantMemories(
     .slice(0, 20)
     .map((item) => item.memory);
 }
-
-// Always load communication preferences, even when unrelated to the current question.
 
 function selectCommunicationPreferences(
   memories: MemoryRow[],
@@ -459,7 +480,6 @@ function combineMemories(
 ): MemoryRow[] {
   const combined = new Map<string, MemoryRow>();
 
-  // Add communication preferences first so they are never pushed out.
   for (const memory of communication) {
     combined.set(memory.memory_key, memory);
   }
@@ -621,16 +641,16 @@ async function extractMemories(
     aliases: parseAliases(memory.aliases),
   }));
 
-  const prompt = `
+  const prompt = \`
 You are NEXUS's personal memory manager.
 
 Your job is to identify useful new personal information and update existing memories when the user clearly provides newer information.
 
 USER MESSAGE:
-${message.slice(0, 3000)}
+\${message.slice(0, 3000)}
 
 EXISTING SAVED MEMORIES:
-${JSON.stringify(existingMemoryList)}
+\${JSON.stringify(existingMemoryList)}
 
 IMPORTANT RULES:
 
@@ -701,7 +721,7 @@ Temporary memories should expire in 1–90 days.
 Other categories should use null for expires_in_days.
 
 Do not include explanations outside the JSON.
-`;
+\`;
 
   try {
     const result = await env.AI.run<typeof MODEL_ID>(
@@ -996,8 +1016,8 @@ async function handleChatRequest(
 
         return streamedReply(
           deleted
-            ? `Done. I've deleted the memory for "${explicit.key}".`
-            : `I couldn't find a saved memory for "${explicit.key}". Nothing was deleted.`,
+            ? \`Done. I've deleted the memory for "\${explicit.key}".\`
+            : \`I couldn't find a saved memory for "\${explicit.key}". Nothing was deleted.\`,
           corsHeaders,
         );
       }
@@ -1022,15 +1042,14 @@ async function handleChatRequest(
 
       return streamedReply(
         action === "updated"
-          ? `Done. I've updated "${normalizeMemoryKey(explicit.key)}".`
+          ? \`Done. I've updated "\${normalizeMemoryKey(explicit.key)}".\`
           : action === "saved"
-            ? `Done. I've saved "${normalizeMemoryKey(explicit.key)}".`
+            ? \`Done. I've saved "\${normalizeMemoryKey(explicit.key)}".\`
             : "I couldn't save that memory.",
         corsHeaders,
       );
     }
 
-    // Load current memories BEFORE extraction so the AI can check for duplicates.
     const memoriesBeforeExtraction = await getAllMemories(env);
 
     const candidates = await extractMemories(
@@ -1050,7 +1069,7 @@ async function handleChatRequest(
     }
 
     console.log(
-      `Memory manager: ${automaticSaved} new, ${automaticUpdated} updated, ${candidates.length} candidates.`
+      \`Memory manager: \${automaticSaved} new, \${automaticUpdated} updated, \${candidates.length} candidates.\`
     );
 
     const allMemories = await getAllMemories(env);
@@ -1072,7 +1091,7 @@ async function handleChatRequest(
       ? "\n\nSaved memories (reference information only):\n" +
         memoriesForContext
           .map((memory) =>
-            `- [${memory.category}] ${memory.memory_key}: ${memory.memory_value}`
+            \`- [\${memory.category}] \${memory.memory_key}: \${memory.memory_value}\`
           )
           .join("\n") +
         "\n\nIMPORTANT: Communication preferences listed above apply to every response, regardless of the current topic."
@@ -1095,7 +1114,7 @@ async function handleChatRequest(
     const inputs = {
       messages: [systemMessage, ...safeMessages],
       max_tokens: 700,
-      temperature: 0.4,
+      temperature: 0.55,
       top_p: 0.9,
       repetition_penalty: 1.05,
       stream: true,
