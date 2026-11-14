@@ -1,4 +1,3 @@
-
 import { Env, ChatMessage } from "./types";
 
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
@@ -81,6 +80,11 @@ IMPORTANT NEWS ACCURACY RULES:
 24. Never invent missing details to make a story sound complete.
 25. Explain significant source disagreements.
 26. Do not invent verification results.
+27. Do not describe a claim as confirmed solely because it appears in a headline.
+28. Examine the supplied text highlights for evidence that directly relates to the claim.
+29. Preserve qualifiers such as "alleged", "reportedly" and "according to sources".
+30. A search result from an official domain is a lead, not proof that the organisation made the announcement.
+31. If the supplied text does not directly support a claim, say that the claim could not be established from the available evidence.
 
 YOUR CURRENT CAPABILITIES:
 - Hold conversations and answer questions.
@@ -241,12 +245,12 @@ type WebSearchResult = {
 
 type VerificationResult = {
   original: WebSearchResult;
-  primarySources: WebSearchResult[];
-  independentSources: WebSearchResult[];
+  officialSourceLeads: WebSearchResult[];
+  otherPublisherLeads: WebSearchResult[];
   status:
-    | "primary_source_search_match"
-    | "distinct_domain_reporting_matches"
-    | "unverified";
+    | "official_source_lead"
+    | "multiple_publisher_leads"
+    | "no_supporting_leads";
 };
 
 // WEB RESEARCH
@@ -284,9 +288,6 @@ function getDomain(url: string): string {
   }
 }
 
-// Reduce subdomains to a practical publisher-domain grouping.
-// This is a heuristic, not a complete public suffix database.
-
 function getPublisherDomain(url: string): string {
   const domain = getDomain(url);
 
@@ -323,9 +324,6 @@ function getPublisherDomain(url: string): string {
 
   return parts.slice(-2).join(".");
 }
-
-// These are known official-source domains.
-// A domain match is only a search lead, not proof of a claim.
 
 const OFFICIAL_SOURCE_DOMAINS = [
   "nvidia.com",
@@ -377,26 +375,41 @@ function isLikelyPrimarySource(url: string): boolean {
   );
 }
 
+// Meaningful words used to compare search results.
+// This is a relevance filter, not a truth-verification system.
+
+const STOP_WORDS = new Set([
+  "the", "and", "for", "with", "from", "that", "this",
+  "has", "have", "will", "its", "are", "was", "were",
+  "into", "about", "after", "before", "says", "said",
+  "new", "news", "update", "updates", "official",
+  "report", "reports", "according", "their", "they",
+  "what", "when", "where", "which", "who", "why",
+  "how", "can", "could", "would", "should", "been",
+  "being", "than", "then", "also", "more", "most",
+  "some", "many", "much", "very", "over", "under",
+  "company", "companies", "today", "yesterday",
+  "latest", "recent", "recently", "announced",
+]);
+
+function getMeaningfulWords(value: string): Set<string> {
+  return new Set(
+    value.toLowerCase()
+      .replace(/https?:\/\/\S+/g, " ")
+      .replace(/[^a-z0-9 ]/g, " ")
+      .split(/\s+/)
+      .filter((word) =>
+        word.length > 2 && !STOP_WORDS.has(word)
+      ),
+  );
+}
+
 function titleSimilarity(
   first: string,
   second: string,
 ): number {
-  const stopWords = new Set([
-    "the", "and", "for", "with", "from", "that", "this",
-    "has", "have", "will", "its", "are", "was", "were",
-    "into", "about", "after", "before", "says", "said",
-    "new", "news", "update", "updates", "official",
-    "report", "reports", "according", "their", "they",
-  ]);
-
-  const words = (value: string) =>
-    value.toLowerCase()
-      .replace(/[^a-z0-9 ]/g, " ")
-      .split(/\s+/)
-      .filter((word) => word.length > 2 && !stopWords.has(word));
-
-  const a = new Set(words(first));
-  const b = new Set(words(second));
+  const a = getMeaningfulWords(first);
+  const b = getMeaningfulWords(second);
 
   if (a.size === 0 || b.size === 0) return 0;
 
@@ -406,8 +419,39 @@ function titleSimilarity(
     if (b.has(word)) matches++;
   }
 
-  // Jaccard similarity is stricter than dividing by the smaller set.
   return matches / (a.size + b.size - matches);
+}
+
+function hasEvidenceOverlap(
+  original: WebSearchResult,
+  candidate: WebSearchResult,
+): boolean {
+  const originalWords = getMeaningfulWords(
+    original.title + " " + original.snippet,
+  );
+
+  const candidateWords = getMeaningfulWords(
+    candidate.title + " " + candidate.snippet,
+  );
+
+  if (originalWords.size === 0 || candidateWords.size === 0) {
+    return false;
+  }
+
+  let matches = 0;
+
+  for (const word of originalWords) {
+    if (candidateWords.has(word)) matches++;
+  }
+
+  const overlap = matches / originalWords.size;
+
+  const titleMatch = titleSimilarity(
+    original.title,
+    candidate.title,
+  );
+
+  return overlap >= 0.30 || titleMatch >= 0.25;
 }
 
 async function searchExa(
@@ -422,6 +466,7 @@ async function searchExa(
 
   try {
     const now = new Date();
+
     const sevenDaysAgo = new Date(
       now.getTime() - 7 * 24 * 60 * 60 * 1000,
     );
@@ -456,11 +501,13 @@ async function searchExa(
 
     if (!response.ok) {
       const errorText = await response.text();
+
       console.error(
         "Exa search failed:",
         response.status,
         errorText.slice(0, 500),
       );
+
       return [];
     }
 
@@ -491,12 +538,14 @@ async function searchExa(
             return false;
           }
 
-          const publishedTimestamp = Date.parse(item.publishedDate);
+          const publishedTimestamp = Date.parse(
+            item.publishedDate,
+          );
 
           return (
             Number.isFinite(publishedTimestamp) &&
             publishedTimestamp >= sevenDaysAgo.getTime() &&
-            publishedTimestamp <= now.getTime() + 60 * 60 * 1000
+            publishedTimestamp <= now.getTime()
           );
         }
 
@@ -521,9 +570,13 @@ async function searchExa(
           indexedAt: item.publishedDate || undefined,
         };
       });
+  } catch (error) {
+    console.error("Exa search request failed:", error);
+    return [];
+  }
 }
 
-// SECOND-STAGE NEWS VERIFICATION
+// SECOND-STAGE NEWS RESEARCH
 
 async function verifyNewsResult(
   result: WebSearchResult,
@@ -532,7 +585,7 @@ async function verifyNewsResult(
   const verificationQuery = [
     `"${result.title}"`,
     result.snippet.slice(0, 300),
-    "official statement independent reporting",
+    "official statement primary source reporting",
   ].filter(Boolean).join(" ");
 
   const supportingResults = await searchExa(
@@ -541,25 +594,21 @@ async function verifyNewsResult(
     false,
   );
 
-  const relevantResults = supportingResults.filter((item) => {
-    const titleMatch = titleSimilarity(
-      result.title,
-      item.title,
-    );
-
-    const contentMatch = titleSimilarity(
-      result.title,
-      `${item.title} ${item.snippet}`,
-    );
-
-    return titleMatch >= 0.25 || contentMatch >= 0.35;
-  });
+  const relevantResults = supportingResults.filter((item) =>
+    hasEvidenceOverlap(result, item)
+  );
 
   const originalPublisher = getPublisherDomain(result.url);
 
-  // Keep only one result per publisher grouping.
-  const primaryByPublisher = new Map<string, WebSearchResult>();
-  const reportingByPublisher = new Map<string, WebSearchResult>();
+  const officialByPublisher = new Map<
+    string,
+    WebSearchResult
+  >();
+
+  const otherByPublisher = new Map<
+    string,
+    WebSearchResult
+  >();
 
   for (const item of relevantResults) {
     const publisher = getPublisherDomain(item.url);
@@ -569,31 +618,37 @@ async function verifyNewsResult(
     }
 
     if (isLikelyPrimarySource(item.url)) {
-      if (!primaryByPublisher.has(publisher)) {
-        primaryByPublisher.set(publisher, item);
+      if (!officialByPublisher.has(publisher)) {
+        officialByPublisher.set(publisher, item);
       }
     } else {
-      if (!reportingByPublisher.has(publisher)) {
-        reportingByPublisher.set(publisher, item);
+      if (!otherByPublisher.has(publisher)) {
+        otherByPublisher.set(publisher, item);
       }
     }
   }
 
-  const primarySources = [...primaryByPublisher.values()];
-  const independentSources = [...reportingByPublisher.values()];
+  const officialSourceLeads = [
+    ...officialByPublisher.values(),
+  ];
 
-  let status: VerificationResult["status"] = "unverified";
+  const otherPublisherLeads = [
+    ...otherByPublisher.values(),
+  ];
 
-  if (primarySources.length > 0) {
-    status = "primary_source_search_match";
-  } else if (independentSources.length >= 2) {
-    status = "distinct_domain_reporting_matches";
+  let status: VerificationResult["status"] =
+    "no_supporting_leads";
+
+  if (officialSourceLeads.length > 0) {
+    status = "official_source_lead";
+  } else if (otherPublisherLeads.length >= 2) {
+    status = "multiple_publisher_leads";
   }
 
   return {
     original: result,
-    primarySources,
-    independentSources,
+    officialSourceLeads,
+    otherPublisherLeads,
     status,
   };
 }
@@ -611,9 +666,9 @@ async function verifyNewsResults(
 
         return {
           original: result,
-          primarySources: [],
-          independentSources: [],
-          status: "unverified" as const,
+          officialSourceLeads: [],
+          otherPublisherLeads: [],
+          status: "no_supporting_leads" as const,
         };
       }
     }),
@@ -665,8 +720,8 @@ STRICT INSTRUCTIONS:
         ? `Exa-supplied publication date: ${result.indexedAt}`
         : "",
       result.snippet
-        ? `Relevant text: ${result.snippet}`
-        : "",
+        ? `Relevant text highlights: ${result.snippet}`
+        : "No text highlights supplied.",
       `URL: ${result.url}`,
     ].filter(Boolean).join("\n");
   }).join("\n\n");
@@ -679,37 +734,40 @@ STRICT INSTRUCTIONS:
 
     const verificationContext = verificationResults.map(
       (check, index) => {
-        const primary = check.primarySources.length > 0
-          ? check.primarySources.map((item) =>
-              `- ${item.title} | ${item.source} | ${item.snippet} | ${item.url}`
+        const official = check.officialSourceLeads.length > 0
+          ? check.officialSourceLeads.map((item) =>
+              `- ${item.title}\n  Domain: ${item.source}\n  Relevant text: ${item.snippet}\n  URL: ${item.url}`
             ).join("\n")
-          : "No likely primary-source search match found.";
+          : "No likely official-source search match found.";
 
-        const independent = check.independentSources.length > 0
-          ? check.independentSources.map((item) =>
-              `- ${item.title} | ${item.source} | ${item.snippet} | ${item.url}`
+        const other = check.otherPublisherLeads.length > 0
+          ? check.otherPublisherLeads.map((item) =>
+              `- ${item.title}\n  Domain: ${item.source}\n  Relevant text: ${item.snippet}\n  URL: ${item.url}`
             ).join("\n")
-          : "No distinct-domain reporting matches found.";
+          : "No other-publisher search matches found.";
 
         const statusLabel =
-          check.status === "primary_source_search_match"
-            ? "LIKELY PRIMARY-SOURCE SEARCH MATCH — NOT PROOF"
-            : check.status === "distinct_domain_reporting_matches"
-              ? "DISTINCT-DOMAIN REPORTING MATCHES — NOT PROOF"
-              : "UNVERIFIED";
+          check.status === "official_source_lead"
+            ? "LIKELY OFFICIAL-SOURCE SEARCH LEAD — NOT PROOF"
+            : check.status === "multiple_publisher_leads"
+              ? "MULTIPLE PUBLISHER SEARCH LEADS — NOT PROOF"
+              : "NO SUPPORTING SEARCH LEADS FOUND — UNVERIFIED";
 
         return `
 CLAIM ${index + 1}: ${check.original.title}
-Verification status: ${statusLabel}
 
-Likely primary-source search matches:
-${primary}
+Research status:
+${statusLabel}
 
-Distinct-domain reporting matches:
-${independent}
+Likely official-source search leads:
+${official}
+
+Other publisher search leads:
+${other}
 
 IMPORTANT:
 These are search matches, not independently inspected documents.
+The supplied text may not establish the exact claim.
 `;
       },
     ).join("\n");
@@ -717,30 +775,32 @@ These are search matches, not independently inspected documents.
     return `
 RECENT NEWS SEARCH RESULTS
 
-The following results were returned by Exa's news search and passed a seven-day publication-date check.
+The following results were returned by Exa's news search and passed the seven-day publication-date filter.
 
 ${formattedResults}
 
-SECOND-STAGE VERIFICATION RESULTS
+SECOND-STAGE RESEARCH
 
-A separate Exa search was performed for each news result to look for supporting evidence.
+A separate Exa search was performed for each news result to look for relevant supporting material.
 
 ${verificationContext}
 
 STRICT INSTRUCTIONS:
 - Only the supplied news results can support claims about recent news.
 - Publication dates are supplied by Exa and are not independently verified.
-- A likely primary-source match means a search result came from a domain on the configured official-source list or a recognised government/education domain.
+- A likely official-source match means a search result came from a configured official-source domain or recognised government/education domain.
 - The search has NOT independently inspected the full source.
-- A primary-source domain match does not establish that the page supports the claim.
+- An official-source domain match does not establish that the page supports the claim.
 - Never describe a search match as proof.
-- Distinct publisher domains are not guaranteed to be independent publishers or independent journalism.
-- Do not call a claim officially confirmed merely because a likely primary-source search match exists.
+- Do not call a claim officially confirmed merely because an official-source search match exists.
+- Check whether the supplied text directly supports the exact claim.
+- Multiple publisher domains are not guaranteed to be independent publishers or independent journalism.
 - Do not call a claim independently corroborated merely because two search results have different domains.
 - Multiple articles repeating the same original report are not necessarily independent confirmation.
-- If no supporting evidence is found, clearly label the claim unverified.
+- If no relevant supporting evidence is found, clearly label the claim unverified.
 - Do not repeat serious allegations as established facts.
 - Distinguish the existence of a report from the truth of the report's claims.
+- Preserve qualifiers such as "alleged", "reportedly" and "according to sources".
 - If the supplied evidence cannot establish the event, say it remains unverified.
 - Do not invent article contents or details that are not supplied.
 - Do not claim to have read the full articles.
@@ -1971,6 +2031,7 @@ async function handleChatRequest(
       );
     } catch (error) {
       console.error("NEXUS web research error:", error);
+
       webSearchContext = `
 WEB RESEARCH:
 A search was attempted but failed.
@@ -2026,4 +2087,4 @@ Do not claim that current information was verified.
       },
     );
   }
-}
+    }
