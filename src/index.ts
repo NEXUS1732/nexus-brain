@@ -755,29 +755,43 @@ function hasEvidenceOverlap(
   original: WebSearchResult,
   candidate: RetrievedWebSearchResult,
 ): boolean {
-  // Use the short search headline/highlights as the comparison denominator.
-  // Full roundup text contains many unrelated stories and diluted valid matches.
-  const originalWords = getMeaningfulWords(
-    original.title + " " + original.snippet,
+  // Compare the actual event identifiers first. Search engines often return
+  // official pages with different wording from the original news headline.
+  const originalText = original.title + " " + original.snippet;
+  const candidateText = [
+    candidate.title,
+    candidate.snippet,
+    candidate.pageText || "",
+  ].join(" ");
+
+  const originalEntities = extractNamedEntities(originalText);
+  const candidateEntities = extractNamedEntities(candidateText);
+  const sharedEntities = [...originalEntities].filter((entity) =>
+    candidateEntities.has(entity)
   );
 
-  const candidateWords = getMeaningfulWords(
-    candidate.title + " " +
-    candidate.snippet + " " +
-    (candidate.pageText || ""),
+  // A shared full person/company name is a useful relevance signal even when
+  // the official announcement uses different wording.
+  const sharedNamedEntity = sharedEntities.some((entity) =>
+    entity.includes(" ") || entity.length >= 5
   );
 
-  if (!originalWords.size || !candidateWords.size) return false;
+  const originalWords = getMeaningfulWords(originalText);
+  const candidateWords = getMeaningfulWords(candidateText);
+
+  if (!originalWords.size || !candidateWords.size) {
+    return sharedNamedEntity;
+  }
 
   let matches = 0;
-
   for (const word of originalWords) {
     if (candidateWords.has(word)) matches++;
   }
 
   return (
-    matches / originalWords.size >= 0.20 ||
-    titleSimilarity(original.title, candidate.title) >= 0.20
+    sharedNamedEntity ||
+    matches / originalWords.size >= 0.12 ||
+    titleSimilarity(original.title, candidate.title) >= 0.12
   );
 }
 
