@@ -783,11 +783,11 @@ function hasEvidenceOverlap(
 
 function extractNamedEntities(value: string): Set<string> {
   const matches = value.match(
-    /\\b(?:[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){1,3}|[A-Z]{2,}(?:\\s+[A-Z]{2,})*)\\b/g,
+    /\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}|[A-Z]{2,}(?:\s+[A-Z]{2,})*)\b/g,
   ) || [];
 
   return new Set(
-    matches.map((item) => item.toLowerCase().replace(/\\s+/g, " ").trim())
+    matches.map((item) => item.toLowerCase().replace(/\s+/g, " ").trim())
       .filter((item) => item.length > 2),
   );
 }
