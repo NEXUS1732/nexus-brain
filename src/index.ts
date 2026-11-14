@@ -2664,9 +2664,6 @@ Do not claim that current information was verified.
 `;
     }
 
-    // Bound the total system context, including research and memories.
-    const MAX_SYSTEM_CONTEXT_CHARS = 24000;
-
     const newsRequest = shouldSearchNews(lastUserMessage);
 
     // News research is placed before optional memories so source evidence is not
