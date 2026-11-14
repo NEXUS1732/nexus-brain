@@ -1968,7 +1968,7 @@ async function handleConversationRequest(
     }
 
     const starMatch = url.pathname.match(
-      /^\\/api\\/conversations\\/([^/]+)\\/star$/
+      /^\/api\/conversations\/([^/]+)\/star$/
     );
 
     if (starMatch && request.method === "POST") {
@@ -2005,7 +2005,7 @@ async function handleConversationRequest(
     }
 
     const match = url.pathname.match(
-      /^\\/api\\/conversations\\/([^/]+)$/
+      /^\/api\/conversations\/([^/]+)$/
     );
 
     if (!match) {
