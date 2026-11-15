@@ -1,7 +1,8 @@
 
 import { Env, ChatMessage } from "./types";
 
-const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const MODEL_ID = "meta-llama/llama-3.3-70b-instruct";
+const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 // Keep model inputs bounded to reduce Workers AI request failures.
 const MAX_HISTORY_MESSAGES = 12;
@@ -23,7 +24,7 @@ IDENTITY:
 ARCHITECTURE:
 - Frontend: Cloudflare Pages.
 - Backend: Cloudflare Workers.
-- AI: Meta Llama 3.3 70B through Workers AI.
+- AI: Meta Llama 3.3 70B through OpenRouter, with provider routing.
 - Authentication: Supabase.
 - Persistent memory: Cloudflare D1, nexus_memory_v2.
 - Conversations: Cloudflare D1, nexus_conversations.
@@ -2158,9 +2159,21 @@ Other categories should use null for expires_in_days.
 `;
 
   try {
-    const result = await env.AI.run<typeof MODEL_ID>(
-      MODEL_ID,
-      {
+    if (!env.OPENROUTER_API_KEY) {
+      console.warn("OPENROUTER_API_KEY is not configured; automatic memory extraction is unavailable.");
+      return [];
+    }
+
+    const response = await fetch(OPENROUTER_CHAT_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": `https://${MAIN_DOMAIN}`,
+        "X-Title": "NEXUS",
+      },
+      body: JSON.stringify({
+        model: MODEL_ID,
         messages: [
           {
             role: "system",
@@ -2173,10 +2186,21 @@ Other categories should use null for expires_in_days.
         ],
         max_tokens: 400,
         temperature: 0.1,
-      },
-    );
+        stream: false,
+      }),
+    });
 
-    const raw = (result as { response?: string }).response || "";
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenRouter memory request failed (${response.status}): ${errorText.slice(0, 500)}`);
+    }
+
+    const result = await response.json() as {
+      choices?: Array<{ message?: { content?: unknown } }>;
+    };
+    const raw = typeof result.choices?.[0]?.message?.content === "string"
+      ? result.choices[0].message.content
+      : "";
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) return [];
@@ -2975,6 +2999,7 @@ Do not claim that current information was verified.
     };
 
     const inputs = {
+      model: MODEL_ID,
       messages: [systemMessage, ...boundedMessages],
       // News answers need room for source links and claim-level qualifications.
       max_tokens: newsRequest ? 1100 : 700,
@@ -2983,7 +3008,7 @@ Do not claim that current information was verified.
       top_p: 0.9,
       repetition_penalty: 1.05,
       stream: true,
-    } satisfies AiTextGenerationInput & { stream: true };
+    };
 
     console.log(
       "NEXUS AI request:",
@@ -2998,12 +3023,36 @@ Do not claim that current information was verified.
       }),
     );
 
-    const stream = await env.AI.run<typeof MODEL_ID>(
-      MODEL_ID,
-      inputs,
-    );
+    if (!env.OPENROUTER_API_KEY) {
+      throw new Error("NEXUS AI is not configured yet. The OpenRouter API key must be added to the Worker secrets.");
+    }
 
-    return new Response(stream, {
+    const aiResponse = await fetch(OPENROUTER_CHAT_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": `https://${MAIN_DOMAIN}`,
+        "X-Title": "NEXUS",
+      },
+      body: JSON.stringify(inputs),
+    });
+
+    if (!aiResponse.ok) {
+      const errorText = await aiResponse.text();
+      console.error(
+        "OpenRouter chat request failed:",
+        aiResponse.status,
+        errorText.slice(0, 1000),
+      );
+      throw new Error(`AI provider request failed (${aiResponse.status}): ${errorText.slice(0, 500)}`);
+    }
+
+    if (!aiResponse.body) {
+      throw new Error("The AI provider returned an empty response stream.");
+    }
+
+    return new Response(aiResponse.body, {
       headers: {
         ...corsHeaders,
         "Content-Type": "text/event-stream; charset=utf-8",
