@@ -1,5 +1,6 @@
 
 import { Env, ChatMessage } from "./types";
+import { authenticateNexusSession, handleAuthRequest } from "./auth";
 
 const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fast";
 
@@ -24,7 +25,7 @@ ARCHITECTURE:
 - Frontend: Cloudflare Pages.
 - Backend: Cloudflare Workers.
 - AI: Meta Llama 3.1 8B through Workers AI.
-- Authentication: Supabase.
+- Authentication: NEXUS username/password sessions with one-time Supabase account migration.
 - Persistent memory: Cloudflare D1, nexus_memory_v2.
 - Conversations: Cloudflare D1, nexus_conversations.
 - Web research: Exa search API.
@@ -1686,39 +1687,23 @@ function isAllowedOrigin(origin: string): boolean {
   }
 }
 
-async function authenticateUser(
-  request: Request,
-  env: Env,
-): Promise<string | null> {
+async function authenticateUser(request: Request, env: Env): Promise<string | null> {
+  const nexusUserId = await authenticateNexusSession(request, env);
+  if (nexusUserId) return nexusUserId;
+
+  // Temporary compatibility: existing Supabase sessions continue working
+  // until the account owner completes the one-time migration.
   const authorization = request.headers.get("Authorization");
-
   if (!authorization?.startsWith("Bearer ")) return null;
-
-  const token = authorization.slice(7).trim();
-  if (!token) return null;
-
   try {
-    const response = await fetch(
-      `${env.SUPABASE_URL.replace(/\/+$/, "")}/auth/v1/user`,
-      {
-        method: "GET",
-        headers: {
-          apikey: env.SUPABASE_PUBLISHABLE_KEY,
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
-
+    const response = await fetch(`${env.SUPABASE_URL.replace(/\\/+$/, "")}/auth/v1/user`, {
+      method: "GET",
+      headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY, Authorization: authorization },
+    });
     if (!response.ok) return null;
-
     const user = await response.json() as { id?: unknown };
-
     return typeof user.id === "string" ? user.id : null;
-  } catch (error) {
-    console.error(
-      "Supabase authentication failed:",
-      describeError(error),
-    );
+  } catch {
     return null;
   }
 }
@@ -2686,6 +2671,10 @@ export default {
           status: 204,
           headers: corsHeaders,
         });
+      }
+
+      if (url.pathname.startsWith("/api/auth/")) {
+        return handleAuthRequest(request, env, corsHeaders);
       }
 
       const userId = await authenticateUser(request, env);
