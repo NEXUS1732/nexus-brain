@@ -1043,6 +1043,9 @@ function getOfficialSearchDomains(result: RetrievedWebSearchResult): string[] {
   if (/\bdamac\b/.test(text)) {
     domains.push("wam.ae");
   }
+  if (/\b(runway|praxis-1)\b/.test(text)) {
+    domains.push("runwayml.com");
+  }
   if (/\b(microsoft 365|exchange online|microsoft)\b/.test(text)) {
     domains.push("microsoft.com");
   }
@@ -1435,6 +1438,8 @@ HIGHEST-PRIORITY VERIFICATION AND OUTPUT RULES:
 - A different domain or publisher count is never enough to establish corroboration.
 - Trace reporting to its origin. Articles repeating the same press release, wire story, anonymous source, interview or original report are one source chain, not independent corroboration.
 - Mark OFFICIALLY CONFIRMED when retrieved text from an exact official or primary-source URL directly states the central event or announcement. Do not downgrade it merely because independent coverage is absent.
+- HARD LABEL CHECK: before assigning OFFICIALLY CONFIRMED or BOTH, verify that at least one URL in the supplied official-source leads is an authentic official/primary-source domain AND its extracted page text directly supports the central event. The official URL must appear beside the confirming Claim checks bullet and in Sources. If the only usable source is a media article, newsletter, blog, or roundup, the story MUST be UNVERIFIED or INDEPENDENTLY CORROBORATED (only if two genuinely independent publishers support it). Never call a media article an official announcement.
+- If no official source URL and supporting extracted text are present in the supplied evidence, do not infer official confirmation from the story's wording, headline, or the fact that a company is named.
 - Mark INDEPENDENTLY CORROBORATED only when at least two credible publishers' retrieved text directly supports the same precise claim and their reporting origins are genuinely independent.
 - Mark BOTH only when both tests above are separately met. Otherwise use UNVERIFIED. A single-source report is UNVERIFIED unless its central announcement is directly confirmed by an official source.
 - Evidence labels apply to the central event only. Assess every additional detail, number, date, market movement, named person and status separately in Claim checks; do not let a confirmed central event make unsupported side details appear confirmed.
@@ -1444,6 +1449,7 @@ HIGHEST-PRIORITY VERIFICATION AND OUTPUT RULES:
 - A central-event evidence label does not transfer to side claims. For example, an official CEO-transition announcement does not prove who the board approached or the week's share-price movement unless that page explicitly says so.
 - If the supplied evidence does not support a detail, do not preserve it in the What happened summary as an unqualified fact.
 - Check every number and its unit. A dollar-per-share offer price is not a company valuation; a funding target is not money already raised; a proposed or expected event is not completed.
+- For investment announcements, distinguish amounts invested, committed, pledged, allocated, targeted and planned. These terms are not interchangeable. For DAMAC-related claims, search the official WAM.ae source track and preserve the source's exact status for the reported approximately $9 billion (for example, already invested versus committed); never upgrade or alter that status.
 - For every material claim, link directly to the exact supplied URL whose retrieved text supports it. If no retrieved text supports it, link only as the original report and say it is unverified.
 - Never use a search-result headline, snippet, keyword overlap or source count as evidence.
 - Do not invent missing source links, facts, dates, amounts or certainty.
