@@ -4,9 +4,9 @@ import { Env, ChatMessage } from "./types";
 const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fast";
 
 // Keep model inputs bounded to reduce Workers AI request failures.
-const MAX_HISTORY_MESSAGES = 12;
-const MAX_HISTORY_CHARS = 14000;
-const MAX_MESSAGE_CHARS = 4000;
+const MAX_HISTORY_MESSAGES = 6;
+const MAX_HISTORY_CHARS = 5000;
+const MAX_MESSAGE_CHARS = 2000;
 const MAX_NEWS_STORIES = 3;
 const MAX_SUPPORTING_SOURCES = 2;
 const MAX_PAGE_TEXT = 1400;
@@ -2905,36 +2905,8 @@ async function handleChatRequest(
       );
     }
 
-    const memoriesBeforeExtraction = await getAllMemories(
-      env,
-      userId,
-    );
-
-    const candidates = await extractMemories(
-      env,
-      lastUserMessage,
-      memoriesBeforeExtraction,
-    );
-
-    let automaticSaved = 0;
-    let automaticUpdated = 0;
-
-    for (const candidate of candidates) {
-      const action = await saveMemory(
-        env,
-        userId,
-        candidate,
-        "automatic",
-      );
-
-      if (action === "saved") automaticSaved++;
-      if (action === "updated") automaticUpdated++;
-    }
-
-    console.log(
-      `Memory manager for ${userId}: ${automaticSaved} new, ${automaticUpdated} updated, ${candidates.length} candidates.`,
-    );
-
+    // Automatic AI memory extraction is temporarily paused to conserve the
+    // daily free Workers AI allowance. Explicit remember/update commands remain available.
     const allMemories = await getAllMemories(env, userId);
 
     const relevantMemories = selectRelevantMemories(
@@ -2989,7 +2961,7 @@ Do not claim that current information was verified.
 
     // News research is placed before optional memories so source evidence is not
     // silently cut off when the system context reaches its character budget.
-    const MAX_SYSTEM_CONTEXT_CHARS = newsRequest ? 32000 : 24000;
+    const MAX_SYSTEM_CONTEXT_CHARS = newsRequest ? 18000 : 14000;
 
     const systemContent = (
       SYSTEM_PROMPT +
