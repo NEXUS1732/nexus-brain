@@ -48,6 +48,11 @@ export async function authenticateNexusSession(request: Request, env: Env): Prom
 export async function handleAuthRequest(request: Request, env: Env, cors: Record<string, string>): Promise<Response> {
   const path = new URL(request.url).pathname;
   if (request.method !== "POST") return response({ error: "Method not allowed." }, 405, cors);
+  if (path === "/api/auth/logout") {
+    const token = (request.headers.get("Authorization") || "").replace(/^Bearer\\s+/, "").trim();
+    if (token) await env.DB.prepare("DELETE FROM nexus_auth_sessions WHERE token_hash = ?").bind(await digest(token)).run();
+    return response({ ok: true }, 200, cors);
+  }
   let body: Record<string, unknown>;
   try { body = await request.json() as Record<string, unknown>; }
   catch { return response({ error: "Invalid request." }, 400, cors); }
@@ -97,7 +102,11 @@ export async function handleAuthRequest(request: Request, env: Env, cors: Record
       .bind(username).first<{ user_id: string; username: string; password_salt: string; password_hash: string; password_iterations: number }>();
     if (!user) return response({ error: "Username or password is incorrect." }, 401, cors);
     const calculated = await passwordHash(password, fromB64url(user.password_salt), user.password_iterations);
-    if (calculated !== user.password_hash) return response({ error: "Username or password is incorrect." }, 401, cors);
+    let mismatch = calculated.length ^ user.password_hash.length;
+    for (let i = 0; i < Math.max(calculated.length, user.password_hash.length); i++) {
+      mismatch |= (calculated.charCodeAt(i) || 0) ^ (user.password_hash.charCodeAt(i) || 0);
+    }
+    if (mismatch !== 0) return response({ error: "Username or password is incorrect." }, 401, cors);
     const token = await issueSession(env, user.user_id);
     return response({ token, user: { id: user.user_id, username: user.username } }, 200, cors);
   }
