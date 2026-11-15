@@ -757,7 +757,14 @@ function hasEvidenceOverlap(
 ): boolean {
   // Compare the actual event identifiers first. Search engines often return
   // official pages with different wording from the original news headline.
-  const originalText = original.title + " " + original.snippet;
+  // Roundup headlines and highlights often omit the specific event details.
+  // Include the retrieved article body so evidence matching can see named
+  // people, companies and claims mentioned deeper in the original page.
+  const originalText = [
+    original.title,
+    original.snippet,
+    original.pageText || "",
+  ].join(" ");
   const candidateText = [
     candidate.title,
     candidate.snippet,
@@ -1023,9 +1030,10 @@ async function verifyNewsResult(
 ): Promise<DetailedVerificationResult> {
   const queryContext = [
     `"${result.title}"`,
-    result.snippet.slice(0, 300),
-    // A short opening excerpt often contains the exact event named in a roundup.
-    (result.pageText || "").slice(0, 500),
+    result.snippet.slice(0, 500),
+    // Roundups may mention the key event after their opening paragraph.
+    // Use more of the extracted body to build a claim-relevant search query.
+    (result.pageText || "").slice(0, 1200),
   ].filter(Boolean).join(" ");
 
   // Search 1: Look specifically for primary and official announcements.
