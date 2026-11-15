@@ -77,12 +77,6 @@ export async function handleAuthRequest(request: Request, env: Env, cors: Record
     await env.DB.prepare("UPDATE nexus_auth_attempts SET attempts = attempts + 1 WHERE attempt_key = ?").bind(attemptKey).run();
   }
 
-  if (path === "/api/auth/logout") {
-    const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/, "").trim();
-    if (token) await env.DB.prepare("DELETE FROM nexus_auth_sessions WHERE token_hash = ?").bind(await digest(token)).run();
-    return response({ ok: true }, 200, cors);
-  }
-
   if (path === "/api/auth/register") {
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const id = crypto.randomUUID();
