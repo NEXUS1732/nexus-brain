@@ -1,5 +1,5 @@
 -- NEXUS username/password authentication.
--- Apply to the existing D1 database (nexus-memory) before deploying the auth Worker.
+-- Apply ONLY to a separate staging D1 database (nexus-memory-staging). Never run this on the production database during testing.
 -- Existing conversation/memory owner IDs remain valid: migrated users keep their
 -- original Supabase UUID as nexus_auth_users.user_id.
 
