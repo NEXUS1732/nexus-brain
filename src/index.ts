@@ -2756,6 +2756,37 @@ async function handleChatRequest(
   corsHeaders: Record<string, string>,
 ): Promise<Response> {
   try {
+    // Diagnose a missing Workers AI binding before attempting inference.
+    if (!env.AI || typeof env.AI.run !== "function") {
+      const availableBindings = Object.keys(
+        env as unknown as Record<string, unknown>,
+      );
+
+      console.error(
+        "NEXUS Workers AI binding unavailable:",
+        JSON.stringify({
+          hasAI: Boolean(env.AI),
+          aiType: typeof env.AI,
+          availableBindings,
+        }),
+      );
+
+      return new Response(
+        JSON.stringify({
+          error: "Workers AI binding is unavailable in this deployment.",
+          details: "The Worker received no usable AI binding. Check the Workers AI binding on the deployed Production Worker.",
+        }),
+        {
+          status: 503,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    }
+
     // Use the frontend timezone first, then Cloudflare, then New Zealand time.
     const timeZone = getRequestTimeZone(request);
 
