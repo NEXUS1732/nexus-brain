@@ -1071,13 +1071,15 @@ async function verifyNewsResult(
 
   const originalPublisher = getPublisherDomain(result.url);
 
-  const relevantOfficial = officialSearch.filter((item) =>
-    hasEvidenceOverlap(result, item)
-  );
+  // Do not discard candidate evidence using keyword/entity overlap here.
+  // Roundup articles often contain many unrelated terms, and official pages
+  // use different wording. That heuristic previously removed valid primary
+  // sources before the model could inspect their extracted text.
+  // The model receives these as leads only and must verify each precise claim
+  // against the retrieved page text before citing or assigning an evidence label.
+  const relevantOfficial = officialSearch;
 
-  const relevantIndependent = independentSearch.filter((item) =>
-    hasEvidenceOverlap(result, item)
-  );
+  const relevantIndependent = independentSearch;
 
   const retrievedOfficial = relevantOfficial.filter(
     (item) => item.contentRetrieved,
