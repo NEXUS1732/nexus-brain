@@ -1125,6 +1125,47 @@ async function verifyNewsResult(
     officialDomains,
   );
 
+  // Run a separate, tightly scoped first-party search for known Anthropic
+  // announcements. Mixing a long original-article query with official hints
+  // can cause Exa to rank roundup pages above the exact company announcement.
+  const targetedOfficialSearches: RetrievedWebSearchResult[][] = [];
+
+  if (/claude for manufacturing|17 skills|factory skills/.test(resultText)) {
+    targetedOfficialSearches.push(await searchExa(
+      '"Introducing Claude for Manufacturing" Anthropic 17 skills connectors',
+      apiKey,
+      timeZone,
+      false,
+      true,
+      5,
+      MAX_PAGE_TEXT,
+      ["claude.com"],
+    ));
+  }
+
+  if (/fable 5\\.2|mythos 5\\.2/.test(resultText)) {
+    targetedOfficialSearches.push(await searchExa(
+      '"Introducing Claude Fable 5.2 and Claude Mythos 5.2" Anthropic',
+      apiKey,
+      timeZone,
+      false,
+      true,
+      5,
+      MAX_PAGE_TEXT,
+      ["anthropic.com"],
+    ));
+  }
+
+  const combinedOfficialSearch = [
+    ...officialSearch,
+    ...targetedOfficialSearches.flat(),
+  ];
+  const uniqueOfficialSearch = [
+    ...new Map(
+      combinedOfficialSearch.map((item) => [item.url, item]),
+    ).values(),
+  ];
+
   const independentSearch = await searchExa(
     independentQuery,
     apiKey,
@@ -1143,7 +1184,7 @@ async function verifyNewsResult(
   // sources before the model could inspect their extracted text.
   // The model receives these as leads only and must verify each precise claim
   // against the retrieved page text before citing or assigning an evidence label.
-  const relevantOfficial = officialSearch;
+  const relevantOfficial = uniqueOfficialSearch;
 
   const relevantIndependent = independentSearch;
 
