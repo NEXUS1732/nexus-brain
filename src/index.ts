@@ -1405,6 +1405,11 @@ HIGHEST-PRIORITY VERIFICATION AND OUTPUT RULES:
 - Mark INDEPENDENTLY CORROBORATED only when at least two credible publishers' retrieved text directly supports the same precise claim and their reporting origins are genuinely independent.
 - Mark BOTH only when both tests above are separately met. Otherwise use UNVERIFIED. A single-source report is UNVERIFIED unless its central announcement is directly confirmed by an official source.
 - Evidence labels apply to the central event only. Assess every additional detail, number, date, market movement, named person and status separately in Claim checks; do not let a confirmed central event make unsupported side details appear confirmed.
+- The What happened paragraph may contain ONLY details directly supported by the retrieved text. If the official source confirms only the central event, keep the summary limited to that event and its explicitly confirmed details.
+- Every additional person, board action, proposed successor, market movement, percentage, investment amount, outage duration, cause and operational detail MUST have its own Claim checks bullet and an exact supporting URL. If no retrieved text supports it, mark it "unverified" or omit it.
+- Never write "Uncertainty: None" merely because the central event is officially confirmed. State every material unsupported detail. Use "No material uncertainty found in the supplied evidence" only if every material detail in the summary and claim checks is directly supported by retrieved text.
+- A central-event evidence label does not transfer to side claims. For example, an official CEO-transition announcement does not prove who the board approached or the week's share-price movement unless that page explicitly says so.
+- If the supplied evidence does not support a detail, do not preserve it in the What happened summary as an unqualified fact.
 - Check every number and its unit. A dollar-per-share offer price is not a company valuation; a funding target is not money already raised; a proposed or expected event is not completed.
 - For every material claim, link directly to the exact supplied URL whose retrieved text supports it. If no retrieved text supports it, link only as the original report and say it is unverified.
 - Never use a search-result headline, snippet, keyword overlap or source count as evidence.
@@ -1509,7 +1514,7 @@ Publication date: [date in detected local time]
 - [Important factual claim]: [confirmed / reported but not independently corroborated / unverified]. [Source name](EXACT_URL)
 - [Another important claim, especially any number, valuation, date or status]: [evidence assessment]. [Source name](EXACT_URL)
 
-**Uncertainty:** [State what could not be established, or say "No material uncertainty found in the supplied evidence" only when the supplied text supports that.]
+**Uncertainty:** [List material details that remain unverified. Never write "None" if any material side claim lacks direct evidence.]
 
 **Sources:** [Original article](EXACT_ORIGINAL_URL) · [Official source](EXACT_OFFICIAL_URL) · [Independent source 1](EXACT_URL) · [Independent source 2](EXACT_URL)
 
