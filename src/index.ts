@@ -906,6 +906,7 @@ async function searchExa(
   retrieveFullText = false,
   resultLimit = 5,
   textLimit = MAX_PAGE_TEXT,
+  includeDomains: string[] = [],
 ): Promise<RetrievedWebSearchResult[]> {
   if (!apiKey) {
     console.error("Exa API key is missing.");
@@ -926,6 +927,10 @@ async function searchExa(
           : {}),
       },
     };
+
+    if (includeDomains.length > 0) {
+      requestBody.includeDomains = includeDomains;
+    }
 
     if (newsOnly) {
       requestBody.category = "news";
@@ -1023,6 +1028,34 @@ async function searchExa(
 
 // SECOND-STAGE NEWS RESEARCH
 
+function getOfficialSearchDomains(result: RetrievedWebSearchResult): string[] {
+  const text = [result.title, result.snippet, result.pageText || ""]
+    .join(" ")
+    .toLowerCase();
+  const domains: string[] = [];
+
+  if (/\\b(nvidia|jensen huang)\\b/.test(text)) {
+    domains.push("nvidia.com", "sec.gov");
+  }
+  if (/\\b(anthropic|claude)\\b/.test(text)) {
+    domains.push("anthropic.com");
+  }
+  if (/\\bdamac\\b/.test(text)) {
+    domains.push("wam.ae");
+  }
+  if (/\\b(microsoft 365|exchange online|microsoft)\\b/.test(text)) {
+    domains.push("microsoft.com");
+  }
+  if (/\\b(openai)\\b/.test(text)) {
+    domains.push("openai.com");
+  }
+  if (/\\b(google|deepmind)\\b/.test(text)) {
+    domains.push("google.com", "deepmind.google", "blog.google");
+  }
+
+  return [...new Set(domains)];
+}
+
 async function verifyNewsResult(
   result: RetrievedWebSearchResult,
   apiKey: string,
@@ -1049,14 +1082,23 @@ async function verifyNewsResult(
   ].join(" ");
 
   // Keep the searches sequential to reduce request pressure.
+  const officialDomains = getOfficialSearchDomains(result);
+  const focusedOfficialQuery = [
+    result.title,
+    result.snippet.slice(0, 350),
+    (result.pageText || "").slice(0, 650),
+    "official announcement company newsroom",
+  ].filter(Boolean).join(" ");
+
   const officialSearch = await searchExa(
-    officialQuery,
+    focusedOfficialQuery,
     apiKey,
     timeZone,
     false,
     true,
-    3,
+    5,
     MAX_PAGE_TEXT,
+    officialDomains,
   );
 
   const independentSearch = await searchExa(
