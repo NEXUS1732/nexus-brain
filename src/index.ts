@@ -1034,22 +1034,22 @@ function getOfficialSearchDomains(result: RetrievedWebSearchResult): string[] {
     .toLowerCase();
   const domains: string[] = [];
 
-  if (/\\b(nvidia|jensen huang)\\b/.test(text)) {
+  if (/\b(nvidia|jensen huang)\b/.test(text)) {
     domains.push("nvidia.com", "sec.gov");
   }
-  if (/\\b(anthropic|claude)\\b/.test(text)) {
+  if (/\b(anthropic|claude)\b/.test(text)) {
     domains.push("anthropic.com");
   }
-  if (/\\bdamac\\b/.test(text)) {
+  if (/\bdamac\b/.test(text)) {
     domains.push("wam.ae");
   }
-  if (/\\b(microsoft 365|exchange online|microsoft)\\b/.test(text)) {
+  if (/\b(microsoft 365|exchange online|microsoft)\b/.test(text)) {
     domains.push("microsoft.com");
   }
-  if (/\\b(openai)\\b/.test(text)) {
+  if (/\b(openai)\b/.test(text)) {
     domains.push("openai.com");
   }
-  if (/\\b(google|deepmind)\\b/.test(text)) {
+  if (/\b(google|deepmind)\b/.test(text)) {
     domains.push("google.com", "deepmind.google", "blog.google");
   }
 
@@ -1069,12 +1069,7 @@ async function verifyNewsResult(
     (result.pageText || "").slice(0, 1200),
   ].filter(Boolean).join(" ");
 
-  // Search 1: Look specifically for primary and official announcements.
-  const officialQuery = [
-    queryContext,
-    "official announcement primary source company newsroom",
-  ].join(" ");
-
+  // Search 1: target likely official publishers for this specific event.
   // Search 2: Separately look for independent publisher coverage.
   const independentQuery = [
     queryContext,
