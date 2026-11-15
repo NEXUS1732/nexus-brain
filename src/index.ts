@@ -1250,17 +1250,50 @@ async function performWebSearch(
   const wantsNews = shouldSearchNews(message);
   const newsWindow = getNewsWindow(new Date(), timeZone);
 
-  const searchedResults = await searchExa(
-    message,
-    apiKey,
-    timeZone,
-    wantsNews,
-    wantsNews,
-    // Fetch a wider candidate pool so duplicate articles do not crowd out
-    // other stories before event-level deduplication.
-    wantsNews ? 5 : 5,
-    wantsNews ? MAX_PAGE_TEXT : 1000,
-  );
+  // A single broad news query can be dominated by one weekly roundup.
+  // Search several distinct AI-news angles, then merge and deduplicate the
+  // combined candidate pool before claim verification.
+  const searchedResults = wantsNews
+    ? (
+        await Promise.all([
+          searchExa(
+            `${message} AI company announcements product launches partnerships and business developments`,
+            apiKey,
+            timeZone,
+            true,
+            true,
+            5,
+            MAX_PAGE_TEXT,
+          ),
+          searchExa(
+            `${message} new artificial intelligence models research papers benchmarks and technical releases`,
+            apiKey,
+            timeZone,
+            true,
+            true,
+            5,
+            MAX_PAGE_TEXT,
+          ),
+          searchExa(
+            `${message} AI industry policy regulation funding infrastructure chips and cloud developments`,
+            apiKey,
+            timeZone,
+            true,
+            true,
+            5,
+            MAX_PAGE_TEXT,
+          ),
+        ])
+      ).flat()
+    : await searchExa(
+        message,
+        apiKey,
+        timeZone,
+        false,
+        false,
+        5,
+        1000,
+      );
 
   const results = wantsNews
     ? deduplicateNewsResults(searchedResults).slice(0, MAX_NEWS_STORIES)
