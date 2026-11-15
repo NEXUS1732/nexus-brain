@@ -1526,7 +1526,10 @@ SOURCE-LINK RULES:
 - For OFFICIALLY CONFIRMED, link the official page whose retrieved text directly supports the announcement.
 - For INDEPENDENTLY CORROBORATED, link both genuinely independent publishers that directly support the same claim.
 - For BOTH, include the official source and both independent supporting sources where available.
-- For UNVERIFIED, say clearly that no usable supporting page text was found. You may link the original report, but label it as the original report, not as confirmation.
+- For UNVERIFIED stories, the **What happened** paragraph must not state the underlying event as an established fact. Start with attribution, such as "MLQ reported that ...", then immediately say that NEXUS could not verify the report from the retrieved evidence.
+- For UNVERIFIED stories, describe every unverified detail (including whether the event occurred, duration, cause, impact, numbers and dates) as a claim made by the named original report, never in NEXUS's own factual voice. If the original report's text is not available, omit the detail rather than repeating it.
+- The Claim checks and Uncertainty sections must explicitly identify the central event itself as unverified, not merely say that there was "not enough usable evidence".
+- You may link the original report, but label it as the report making the claim, not as confirmation.
 - If a specific number, date, name or event status is not directly supported, do not repeat it as fact. Either omit it or explicitly mark it unverified and link the report that made the claim.
 - Do not use one general source list as a substitute for linking each major claim to its evidence.
 - Never make up a supporting link to fill a missing source slot. If only one relevant source is available, show only that source.
