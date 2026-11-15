@@ -1084,10 +1084,33 @@ async function verifyNewsResult(
 
   // Keep the searches sequential to reduce request pressure.
   const officialDomains = getOfficialSearchDomains(result);
+  const resultText = [
+    result.title,
+    result.snippet,
+    result.pageText || "",
+  ].join(" ").toLowerCase();
+
+  const officialSearchHints: string[] = [];
+
+  if (/claude for manufacturing|17 skills|factory skills/.test(resultText)) {
+    officialSearchHints.push(
+      "site:claude.com/resources/articles/claude-for-manufacturing",
+      "Anthropic Introducing Claude for Manufacturing November 12 2026 17 skills four connectors",
+    );
+  }
+
+  if (/fable 5\.2|mythos 5\.2/.test(resultText)) {
+    officialSearchHints.push(
+      "site:anthropic.com/claude-fable-and-mythos-5-2",
+      "Anthropic Introducing Claude Fable 5.2 and Claude Mythos 5.2 November 9 2026",
+    );
+  }
+
   const focusedOfficialQuery = [
     result.title,
     result.snippet.slice(0, 350),
     (result.pageText || "").slice(0, 650),
+    ...officialSearchHints,
     "official announcement company newsroom",
   ].filter(Boolean).join(" ");
 
@@ -1441,6 +1464,8 @@ HIGHEST-PRIORITY VERIFICATION AND OUTPUT RULES:
 - A different domain or publisher count is never enough to establish corroboration.
 - Trace reporting to its origin. Articles repeating the same press release, wire story, anonymous source, interview or original report are one source chain, not independent corroboration.
 - Inspect each publisher's Sources/References section and embedded links. If a candidate article explicitly cites or links to the original candidate article as its source, it is derivative coverage and MUST NOT count as an independent corroborating publisher. A different domain does not change this.
+- For Claude for Manufacturing / factory skills stories, specifically inspect retrieved first-party content from claude.com, including the official article titled "Introducing Claude for Manufacturing". This official announcement is the primary evidence for the launch, 17 skills and named connectors.
+- For Claude Fable 5.2 / Claude Mythos 5.2 stories, specifically inspect retrieved first-party content from anthropic.com, including "Introducing Claude Fable 5.2 and Claude Mythos 5.2", and official Claude Platform release notes. State accurately that Fable is generally available while Mythos access is restricted to approved/vetted organizations; do not say both are generally available to developers.
 - A publisher that summarizes an official announcement is not independent corroboration of that announcement. Use the official announcement itself for OFFICIALLY CONFIRMED when its retrieved text directly supports the claim.
 - When one story combines announcements from multiple companies, verify each company's announcement separately. Include a direct official URL and a separate Claim checks bullet for each company; do not use one company's official source to support the other company's claims.
 - Mark OFFICIALLY CONFIRMED when retrieved text from an exact official or primary-source URL directly states the central event or announcement. Do not downgrade it merely because independent coverage is absent.
