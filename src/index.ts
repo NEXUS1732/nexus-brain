@@ -663,6 +663,9 @@ function getPublisherDomain(url: string): string {
 const OFFICIAL_SOURCE_DOMAINS = [
   "nvidia.com",
   "anthropic.com",
+  "claude.com",
+  "runway.com",
+  "runwayml.com",
   "openai.com",
   "google.com",
   "deepmind.google",
@@ -1038,13 +1041,13 @@ function getOfficialSearchDomains(result: RetrievedWebSearchResult): string[] {
     domains.push("nvidia.com", "sec.gov");
   }
   if (/\b(anthropic|claude)\b/.test(text)) {
-    domains.push("anthropic.com");
+    domains.push("anthropic.com", "claude.com");
   }
   if (/\bdamac\b/.test(text)) {
     domains.push("wam.ae");
   }
   if (/\b(runway|praxis-1)\b/.test(text)) {
-    domains.push("runwayml.com");
+    domains.push("runway.com", "runwayml.com");
   }
   if (/\b(microsoft 365|exchange online|microsoft)\b/.test(text)) {
     domains.push("microsoft.com");
@@ -1437,6 +1440,9 @@ HIGHEST-PRIORITY VERIFICATION AND OUTPUT RULES:
 - Do not use a single-source label. The Evidence field must be exactly one of: OFFICIALLY CONFIRMED, INDEPENDENTLY CORROBORATED, BOTH, UNVERIFIED.
 - A different domain or publisher count is never enough to establish corroboration.
 - Trace reporting to its origin. Articles repeating the same press release, wire story, anonymous source, interview or original report are one source chain, not independent corroboration.
+- Inspect each publisher's Sources/References section and embedded links. If a candidate article explicitly cites or links to the original candidate article as its source, it is derivative coverage and MUST NOT count as an independent corroborating publisher. A different domain does not change this.
+- A publisher that summarizes an official announcement is not independent corroboration of that announcement. Use the official announcement itself for OFFICIALLY CONFIRMED when its retrieved text directly supports the claim.
+- When one story combines announcements from multiple companies, verify each company's announcement separately. Include a direct official URL and a separate Claim checks bullet for each company; do not use one company's official source to support the other company's claims.
 - Mark OFFICIALLY CONFIRMED when retrieved text from an exact official or primary-source URL directly states the central event or announcement. Do not downgrade it merely because independent coverage is absent.
 - HARD LABEL CHECK: before assigning OFFICIALLY CONFIRMED or BOTH, verify that at least one URL in the supplied official-source leads is an authentic official/primary-source domain AND its extracted page text directly supports the central event. The official URL must appear beside the confirming Claim checks bullet and in Sources. If the only usable source is a media article, newsletter, blog, or roundup, the story MUST be UNVERIFIED or INDEPENDENTLY CORROBORATED (only if two genuinely independent publishers support it). Never call a media article an official announcement.
 - If no official source URL and supporting extracted text are present in the supplied evidence, do not infer official confirmation from the story's wording, headline, or the fact that a company is named.
